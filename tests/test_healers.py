@@ -128,3 +128,79 @@ def test_h6_decl_impl_detect_and_repair():
     assert res.changed is True
     with open(p, "r", encoding="utf-8") as fh:
         assert '__version__ = "1.0.0"' in fh.read()
+
+
+# ---------------------------------------------------------------------------
+# H7 — integrity guard (trusted-baseline restore)
+# ---------------------------------------------------------------------------
+def _make_baseline_manifest(d, with_bytes=True):
+    """Create a baseline.json (with embedded bytes) for a temp dir."""
+    import hashlib
+    import json
+
+    files = {}
+    for root, _, fns in os.walk(d):
+        for fn in fns:
+            p = os.path.join(root, fn)
+            rel = os.path.relpath(p, d).replace("\\", "/")
+            with open(p, "rb") as fh:
+                data = fh.read()
+            files[rel] = hashlib.sha256(data).hexdigest()
+            if with_bytes:
+                files.setdefault("__bytes__", {})[rel] = data.hex()
+    with open(os.path.join(d, "baseline.json"), "w", encoding="utf-8") as fh:
+        json.dump(files, fh, indent=2, sort_keys=True)
+    return files
+
+
+def test_h7_detects_any_modification():
+    """Any byte deviation from baseline is detected (incl. logic injection)."""
+    from healers.integrity_guard import IntegrityGuardHealer
+
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "app.py"), "w", encoding="utf-8") as fh:
+        fh.write('def ok():\n    return 1\n')
+    _make_baseline_manifest(d)
+
+    # Malicious injection: syntactically valid backdoor appended.
+    with open(os.path.join(d, "app.py"), "a", encoding="utf-8") as fh:
+        fh.write('\nimport socket\ndef _steal():\n    pass\n_steal()\n')
+
+    h = IntegrityGuardHealer()
+    faults = h.detect(d)
+    assert len(faults) == 1
+    assert faults[0].healer == "integrity_guard"
+    assert "deviation" in faults[0].description
+
+
+def test_h7_repairs_to_baseline_bytes():
+    """Repair restores the exact baseline bytes (removes backdoor)."""
+    from healers.integrity_guard import IntegrityGuardHealer
+
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "app.py"), "w", encoding="utf-8") as fh:
+        fh.write('def ok():\n    return 1\n')
+    baseline = _make_baseline_manifest(d)
+    with open(os.path.join(d, "app.py"), "a", encoding="utf-8") as fh:
+        fh.write('\nimport socket\ndef _steal():\n    pass\n_steal()\n')
+
+    h = IntegrityGuardHealer(baseline=baseline)
+    faults = h.detect(d)
+    assert len(faults) == 1
+    res = h.repair(faults[0])
+    assert res.changed is True
+    with open(os.path.join(d, "app.py"), "r", encoding="utf-8") as fh:
+        content = fh.read()
+    assert "socket" not in content and "_steal" not in content
+    assert content == 'def ok():\n    return 1\n'
+
+
+def test_h7_no_baseline_means_no_faults():
+    """Without a baseline, integrity guard stays silent (no false positives)."""
+    from healers.integrity_guard import IntegrityGuardHealer
+
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "app.py"), "w", encoding="utf-8") as fh:
+        fh.write('x = 1\n')
+    h = IntegrityGuardHealer()
+    assert h.detect(d) == []
