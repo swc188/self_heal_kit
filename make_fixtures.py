@@ -33,6 +33,34 @@ def main() -> None:
               newline="\n") as fh:
         fh.write('{"name": "demo", "version": "1.0", "tags": ["a", "b"]}\n')
 
+    # H4 — config-style file with unbalanced double quotes (v3.19.0 class)
+    with open(os.path.join(FX, "sample_quotes.cfg"), "w", encoding="utf-8",
+              newline="\n") as fh:
+        fh.write("# config with an unbalanced quote\n")
+        fh.write('app_name = "my app\n')
+        fh.write('endpoint = "https://example.test"\n')
+        fh.write('token = "abc123\n')
+
+    # H5 — alias table with a known alias whose canonical key is empty
+    # (v3.10.1 display-name vs key; v3.22.0 Chinese term -> method name)
+    with open(os.path.join(FX, "sample_terms.csv"), "w", encoding="utf-8",
+              newline="\n") as fh:
+        fh.write("term,canonical\n")
+        fh.write("区块链 / Web3,\n")
+        fh.write("列表,\n")
+        fh.write("Web 框架,django\n")
+
+    # H6 — declaration (README) vs implementation (__version__) drift
+    # (v3.19.1 README claim != implementation; v3.10.3 contract drift)
+    with open(os.path.join(FX, "README.md"), "w", encoding="utf-8",
+              newline="\n") as fh:
+        fh.write("# Demo Project\n")
+        fh.write("Version: 1.0.0\n")
+    with open(os.path.join(FX, "sample_impl.py"), "w", encoding="utf-8",
+              newline="\n") as fh:
+        fh.write('# implementation whose version drifted from README\n')
+        fh.write('__version__ = "0.9.0"\n')
+
     # Marker used by Scenario B (a fault no healer can auto-fix)
     with open(os.path.join(FX, "sample_unrepairable.txt"), "w",
               encoding="utf-8", newline="\n") as fh:

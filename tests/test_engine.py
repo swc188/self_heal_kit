@@ -77,3 +77,43 @@ def test_snapshot_rollback_on_regression():
     # rolled back to original bytes because the fault persisted
     assert after == before
     assert res["status"] == "FAILED_CLOSED"
+
+
+def test_verify_gate_passes_with_green_test_command():
+    from guards.verify_gate import VerifyGate
+    g = VerifyGate(test_command='python -c "import sys; sys.exit(0)"')
+    green, detail = g.evaluate([])
+    assert green is True
+    assert "test command passed" in detail
+
+
+def test_verify_gate_fails_with_failing_test_command():
+    from guards.verify_gate import VerifyGate
+    g = VerifyGate(test_command='python -c "import sys; sys.exit(1)"')
+    green, detail = g.evaluate([])
+    assert green is False
+    assert "test command failed" in detail
+
+
+def test_engine_heals_then_passes_real_test_command():
+    # A target with a repairable fault AND a passing test command: the engine
+    # repairs the fault, then the gate's test command passes -> HEALED.
+    # (Synthetic command; not a real project.)
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "f.txt"), "wb") as fh:
+        fh.write(b"\xef\xbb\xbf" + "a\r\n".encode("utf-8"))
+    eng = SelfHealEngine(
+        test_command='python -c "import sys; sys.exit(0)"')
+    res = eng.run(d)
+    assert res["status"] == "HEALED"
+    assert "test command passed" in res["verify"]
+
+
+def test_engine_fails_closed_when_test_command_fails():
+    # Clean target, but a failing test command must not yield a false HEALED.
+    d = tempfile.mkdtemp()
+    eng = SelfHealEngine(
+        test_command='python -c "import sys; sys.exit(1)"')
+    res = eng.run(d)
+    assert res["status"] == "FAILED_CLOSED"
+    assert "test command" in res["reason"]

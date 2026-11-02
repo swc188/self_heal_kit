@@ -21,20 +21,30 @@ from healers.base import Fault
 from healers.line_ending import LineEndingHealer
 from healers.brace_escape import BraceEscapeHealer
 from healers.yaml_format import YamlFormatHealer
+from healers.quote_balance import QuoteBalanceHealer
+from healers.key_map_gap import KeyMapGapHealer
+from healers.decl_impl import DeclImplHealer
 from guards.circuit_breaker import CircuitBreaker
 from guards.snapshot_rollback import Snapshot
-from guards.verify_gate import is_green
+from guards.verify_gate import VerifyGate, is_green
 
 
 class SelfHealEngine:
-    def __init__(self, healers=None, max_rounds: int = 6, patience: int = 3):
+    def __init__(self, healers=None, max_rounds: int = 6, patience: int = 3,
+                 test_command: str = None):
         self.healers = healers or [
             LineEndingHealer(),
             BraceEscapeHealer(),
             YamlFormatHealer(),
+            QuoteBalanceHealer(),
+            KeyMapGapHealer(),
+            DeclImplHealer(),
         ]
         self.max_rounds = max_rounds
         self.patience = patience
+        # The verify gate may delegate to a real project test suite. The
+        # self-contained fixtures experiment never sets this (None).
+        self.verifier = VerifyGate(test_command=test_command)
 
     # -- public API ----------------------------------------------------------
     def detect_all(self, target: str):
@@ -48,35 +58,48 @@ class SelfHealEngine:
         log = []
         for rnd in range(1, self.max_rounds + 1):
             faults = self.detect_all(target)
-            if is_green(faults):
-                return {"status": "HEALED", "rounds": rnd - 1, "log": log}
-            sig = [f.signature() for f in faults]
-            progress = 0
-            for f in faults:
-                snap = Snapshot()
-                snap.take(f.path)
-                res = self._repair_for(f)
-                if res is None:
-                    continue
-                if res.changed:
-                    after = self.detect_all(target)
-                    if not any(x.signature() == f.signature() for x in after):
-                        progress += 1
+            green, detail = self.verifier.evaluate(faults)
+            if green:
+                return {"status": "HEALED", "rounds": rnd - 1,
+                        "verify": detail, "log": log}
+            log.append(f"[r{rnd}] {detail}")
+            if faults:
+                sig = [f.signature() for f in faults]
+                progress = 0
+                for f in faults:
+                    snap = Snapshot()
+                    snap.take(f.path)
+                    res = self._repair_for(f)
+                    if res is None:
+                        continue
+                    if res.changed:
+                        after = self.detect_all(target)
+                        if not any(x.signature() == f.signature() for x in after):
+                            progress += 1
+                        else:
+                            snap.restore(f.path)  # regression -> roll back
+                            log.append(f"[r{rnd}] rollback {f.path}: "
+                                       f"repair did not resolve fault")
                     else:
-                        snap.restore(f.path)  # regression -> roll back
-                        log.append(f"[r{rnd}] rollback {f.path}: "
-                                   f"repair did not resolve fault")
-                else:
-                    log.append(f"[r{rnd}] unrepairable {f.path}: {res.detail}")
-            log.append(f"[r{rnd}] faults={len(faults)} progress={progress}")
-            if breaker.observe(sig, progress):
-                return {
-                    "status": "FAILED_CLOSED",
-                    "rounds": rnd,
-                    "reason": "circuit breaker tripped (no progress / repeated "
-                              "fault set) -> escalate to human",
-                    "log": log,
-                }
+                        log.append(f"[r{rnd}] unrepairable {f.path}: {res.detail}")
+                log.append(f"[r{rnd}] faults={len(faults)} progress={progress}")
+                if breaker.observe(sig, progress):
+                    return {
+                        "status": "FAILED_CLOSED",
+                        "rounds": rnd,
+                        "reason": "circuit breaker tripped (no progress / "
+                                  "repeated fault set) -> escalate to human",
+                        "log": log,
+                    }
+            else:
+                # No faults, but an external test command (if configured) failed.
+                if breaker.observe([detail], 0):
+                    return {
+                        "status": "FAILED_CLOSED",
+                        "rounds": rnd,
+                        "reason": f"{detail} -> escalate to human",
+                        "log": log,
+                    }
         return {
             "status": "FAILED_CLOSED",
             "rounds": self.max_rounds,
