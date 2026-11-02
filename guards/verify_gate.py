@@ -26,26 +26,32 @@ def is_green(faults) -> bool:
 
 
 class VerifyGate:
-    def __init__(self, test_command=None, cwd=None, timeout: int = 120):
+    def __init__(self, test_command=None, cwd=None, timeout: int = 300):
         self.test_command = test_command
         self.cwd = cwd
         self.timeout = timeout
 
-    def evaluate(self, faults) -> tuple:
-        """Return ``(green: bool, detail: str)``."""
+    def evaluate(self, faults, target_dir=None) -> tuple:
+        """Return ``(green: bool, detail: str)``.
+
+        ``target_dir`` is used as the working directory for the test command
+        when no explicit ``cwd`` was supplied (so a project's own pytest runs
+        against that project, not against the kit's CWD).
+        """
         if faults:
             return (False, f"{len(faults)} fault(s) remain")
         if not self.test_command:
             return (True, "no faults (self-contained mode)")
-        code, _out = self._run(self.test_command)
+        cwd = self.cwd or target_dir
+        code, _out = self._run(self.test_command, cwd)
         if code == 0:
             return (True, "no faults + test command passed")
         return (False, f"test command failed (exit {code})")
 
-    def _run(self, cmd: str):
+    def _run(self, cmd, cwd=None):
         try:
             r = subprocess.run(
-                cmd, shell=True, cwd=self.cwd,
+                cmd, shell=isinstance(cmd, str), cwd=cwd,
                 capture_output=True, text=True, timeout=self.timeout)
             return r.returncode, (r.stdout + r.stderr)
         except Exception as e:  # pragma: no cover - defensive

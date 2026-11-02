@@ -57,7 +57,7 @@ class SelfHealEngine:
         log = []
         for rnd in range(1, self.max_rounds + 1):
             faults = self.detect_all(target)
-            green, detail = self.verifier.evaluate(faults)
+            green, detail = self.verifier.evaluate(faults, target_dir=target)
             if green:
                 return {"status": "HEALED", "rounds": rnd - 1,
                         "verify": detail, "log": log}
