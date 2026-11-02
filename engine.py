@@ -23,6 +23,7 @@ from healers.yaml_format import YamlFormatHealer
 from healers.quote_balance import QuoteBalanceHealer
 from healers.key_map_gap import KeyMapGapHealer
 from healers.decl_impl import DeclImplHealer
+from healers.integrity_guard import IntegrityGuardHealer
 from guards.circuit_breaker import CircuitBreaker
 from guards.snapshot_rollback import Snapshot
 from guards.verify_gate import VerifyGate, is_green
@@ -38,6 +39,7 @@ class SelfHealEngine:
             QuoteBalanceHealer(),
             KeyMapGapHealer(),
             DeclImplHealer(),
+            IntegrityGuardHealer(),
         ]
         self.max_rounds = max_rounds
         self.patience = patience
