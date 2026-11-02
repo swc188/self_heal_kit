@@ -1,0 +1,4 @@
+# Keep the working tree in LF; the repository stores LF.
+# Prevents the kit's own H1 (CRLF) healer from flagging its own source and
+# avoids Windows autocrlf drift on checkout.
+* text=auto eol=lf
