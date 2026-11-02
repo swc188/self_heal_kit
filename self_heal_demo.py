@@ -35,7 +35,7 @@ def _damage(dst):
         text2 = fh.read()
     damaged2 = text2.replace(
         'f"{len(faults)} fault(s) remain"',
-        'f"{{ {len(faults)} }} fault(s) remain"', 1)
+        'f"{{len(faults)}} fault(s) remain"', 1)
     with open(src2, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(damaged2)
 
