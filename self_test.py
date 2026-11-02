@@ -1,7 +1,6 @@
 """End-to-end self-healing demonstration (rich, before/after visible).
 
-This is the *showcase* of the four-layer self-healing model distilled from
-loop-framework-skill:
+This is the *showcase* of the four-layer self-healing model:
 
     L1 fault-domain recognition  -> healers (H1..H6)
     L2 closed-loop healing       -> engine loop (detect->repair->verify)
@@ -153,8 +152,8 @@ def run_scenario_a() -> dict:
 
     print("=" * 70)
     print("SCENARIO A - repairable faults (one per healer H1..H6)")
-    print("provenance: loop-framework v3.19.1 / v3.16.0 / v3.19.0 / "
-          "v3.10.1 / v3.22.0")
+    print("fault domains: line-ending / brace-escape / fake-yaml / "
+          "quote-balance / key-map-gap / decl-vs-impl")
     print("=" * 70)
     print("\n[BEFORE HEALING] detect phase - faults the engine sees:")
     for p in files:
@@ -213,7 +212,7 @@ def run_scenario_b() -> dict:
 
     print("\n" + "=" * 70)
     print("SCENARIO B - UNREPAIRABLE fault (no healer can fix it)")
-    print("provenance: loop-framework loop_circuit.py fail-closed boundary")
+    print("demonstrates the fail-closed convergence boundary")
     print("=" * 70)
     print("\n[BEFORE] the only fault present:")
     for p in files:

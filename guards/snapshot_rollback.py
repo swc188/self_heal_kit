@@ -2,8 +2,7 @@
 
 Before mutating a file we record its bytes. If a repair does not actually
 remove the fault (a regression), we restore the original content so the engine
-never leaves the target in a worse state than it found it. Provenance:
-loop-framework-skill ``loop_rollback.py``.
+never leaves the target in a worse state than it found it.
 """
 
 from __future__ import annotations

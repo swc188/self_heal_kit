@@ -7,8 +7,7 @@ Pipeline per round:
     else feed (signature set, progress) to the circuit breaker
     breaker trips (no progress / repeated) -> FAILED_CLOSED (escalate)
 
-This encodes the four-layer self-healing model distilled from
-loop-framework-skill:
+This encodes a four-layer self-healing model:
     L1 fault-domain recognition  -> healers
     L2 closed-loop healing       -> this loop
     L3 anti-regression guards    -> snapshot/rollback + verify gate

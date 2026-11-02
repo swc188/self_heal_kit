@@ -1,10 +1,10 @@
-"""H5 — Key / mapping-gap filler (provenance: loop-framework v3.10.1, v3.22.0).
+"""H5 — Key / mapping-gap filler.
 
-Two real faults in loop-framework-skill:
-  * v3.10.1 — matching used a display name ("区块链 / Web3") to look up a
-    generator keyed by "blockchain"; the lookup always missed, silently
-    downgrading every hit.
-  * v3.22.0 — Chinese terms ("列表 / 列举 / 列出") never mapped to the canonical
+A recurring fault shape:
+  * A display name ("区块链 / Web3") used to look up an entry keyed by its
+    canonical id "blockchain"; the lookup always missed, silently downgrading
+    every hit.
+  * Natural-language terms ("列表 / 列举 / 列出") never mapped to the canonical
     method name "list_keys", so evidence search returned nothing.
 
 Both are the same shape: "a known alias is present but its canonical key is
@@ -20,7 +20,7 @@ import io
 
 from .base import Healer, Fault, RepairResult
 
-# Built-in alias -> canonical key table (mirrors loop's _CN_TERM_MAP / domain_key).
+# Built-in alias -> canonical key table.
 ALIASES = {
     "区块链 / Web3": "blockchain",
     "区块链": "blockchain",

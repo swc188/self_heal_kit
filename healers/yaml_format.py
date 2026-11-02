@@ -1,9 +1,10 @@
-"""H3 — Fake-YAML detector (v3.19.0 provenance).
+"""H3 — Fake-YAML detector.
 
 A file carrying a ``.yaml`` / ``.yml`` extension whose body is actually JSON
-(``to_yaml`` emitted a JSON dump by mistake). Detect by attempting a strict
-``json.loads``; if it succeeds the file is *not* real YAML. Repair converts the
-JSON object into a minimal, valid YAML document without any third-party lib.
+(a ``to_yaml`` helper emitted a JSON dump by mistake). Detect by attempting a
+strict ``json.loads``; if it succeeds the file is *not* real YAML. Repair
+converts the JSON object into a minimal, valid YAML document without any
+third-party lib.
 """
 
 from __future__ import annotations

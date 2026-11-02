@@ -3,7 +3,7 @@
 If the closed loop makes *no progress* for ``patience`` consecutive rounds, or
 the exact same fault signature set repeats ``patience`` times (a semantic
 dead-loop), the breaker trips and the engine escalates to a human instead of
-spinning forever. Provenance: loop-framework-skill ``loop_circuit.py``.
+spinning forever.
 """
 
 from __future__ import annotations

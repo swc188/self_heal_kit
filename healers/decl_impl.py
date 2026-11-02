@@ -1,8 +1,8 @@
-"""H6 — Declaration vs implementation consistency (provenance: loop v3.19.1, v3.10.3).
+"""H6 — Declaration vs implementation consistency.
 
-v3.19.1 — the README claim no longer matched the implementation (after the CRLF
-fix). v3.10.3 — root cause was "passing strings between stages instead of
-structured objects", i.e. a declared contract drifted from the code.
+A common drift: a README / documentation claim no longer matches the
+implementation (e.g. after a fix), or a declared contract silently drifted from
+the code that fulfils it.
 
 This healer checks a declared version in a README / markdown file against the
 ``__version__`` in Python modules. The README is treated as the source of truth;

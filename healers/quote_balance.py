@@ -1,9 +1,8 @@
-"""H4 — Quote-balance normalizer (provenance: loop-framework v3.19.0).
+"""H4 — Quote-balance normalizer.
 
-v3.19.0 fixed f-string nested-quote / missing-comma / brace-mismatch bugs in
-generated code. The quote half of that class: a line in a simple
-``key = "value"`` config-style file whose double quotes are unbalanced (a
-missing closing quote), which leaks the rest of the line / file into one string.
+A line in a simple ``key = "value"`` config-style file whose double quotes are
+unbalanced (a missing closing quote), which leaks the rest of the line / file
+into one string.
 
 Deterministic repair: append the missing closing quote on lines that have an
 odd count of ``"`` within scope.

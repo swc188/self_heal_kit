@@ -1,6 +1,6 @@
-"""H2 — Brace / escape leak detector (v3.16.0, v3.19.0 provenance).
+"""H2 — Brace / escape leak detector.
 
-The classic loop-framework-skill fault: an f-string or template literal wrote
+A classic fault class: an f-string or template literal wrote
 ``{{`` / ``}}`` where the *unescaped* ``{`` / ``}`` was intended, so the
 delimiters leaked verbatim into the generated source. We also catch stray
 surrounding ``{{ }}`` pairs.

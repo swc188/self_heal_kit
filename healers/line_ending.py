@@ -1,9 +1,9 @@
 """H1 — Line ending normalizer (CRLF -> LF, strip UTF-8 BOM).
 
-Real-world provenance: loop-framework-skill v3.19.1 — writing
-`.workbuddy/languages` without an explicit newline let CRLF/LF drift with the
-platform, and the README claim no longer matched the implementation. The fix
-was deterministic: write with ``newline="\n"`` (LF, no BOM).
+A common fault: a file written without an explicit newline lets CRLF/LF drift
+with the platform, so the on-disk bytes differ between machines and a documented
+claim no longer matches the implementation. The fix is deterministic: normalise
+to ``newline="\n"`` (LF, no BOM).
 """
 
 from __future__ import annotations

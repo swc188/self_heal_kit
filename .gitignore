@@ -13,3 +13,7 @@ Thumbs.db
 # Local scratch dirs (self_test uses system temp, but keep repo clean)
 work/
 tmp/
+
+# Isolated virtual environment (created in-dir, not committed)
+.venv/
+venv/
