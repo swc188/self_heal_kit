@@ -204,3 +204,82 @@ def test_h7_no_baseline_means_no_faults():
         fh.write('x = 1\n')
     h = IntegrityGuardHealer()
     assert h.detect(d) == []
+
+
+def test_h7_repairs_with_disk_baseline_bytes():
+    """Repair reads embedded bytes from baseline.json on disk (no git)."""
+    from healers.integrity_guard import IntegrityGuardHealer, make_baseline
+
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "app.py"), "w", encoding="utf-8") as fh:
+        fh.write('def ok():\n    return 1\n')
+    make_baseline(d, with_bytes=True)  # writes baseline.json with __bytes__
+
+    # inject a backdoor
+    with open(os.path.join(d, "app.py"), "a", encoding="utf-8") as fh:
+        fh.write('\nimport socket\ndef _steal():\n    pass\n_steal()\n')
+
+    h = IntegrityGuardHealer()
+    faults = h.detect(d)
+    assert len(faults) == 1
+    res = h.repair(faults[0])
+    assert res.changed is True
+    with open(os.path.join(d, "app.py"), "r", encoding="utf-8") as fh:
+        assert fh.read() == 'def ok():\n    return 1\n'
+
+
+def test_h7_restores_deleted_file_from_disk_baseline():
+    """A virus-deleted file is recreated from the disk baseline bytes."""
+    from healers.integrity_guard import IntegrityGuardHealer, make_baseline
+
+    d = tempfile.mkdtemp()
+    sub = os.path.join(d, "pkg")
+    os.makedirs(sub)
+    with open(os.path.join(sub, "mod.py"), "w", encoding="utf-8") as fh:
+        fh.write('VALUE = 42\n')
+    make_baseline(d, with_bytes=True)
+
+    victim = os.path.join(sub, "mod.py")
+    os.remove(victim)  # virus deletes the file
+
+    h = IntegrityGuardHealer()
+    faults = h.detect(d)
+    assert len(faults) == 1
+    assert "missing" in faults[0].description
+
+    res = h.repair(faults[0])
+    assert res.changed is True
+    assert os.path.exists(victim)
+    with open(victim, "r", encoding="utf-8") as fh:
+        assert fh.read() == 'VALUE = 42\n'
+
+
+def test_h7_detect_new_files_strict_mode():
+    """Strict mode reports files not in the baseline (virus-dropped files)."""
+    from healers.integrity_guard import IntegrityGuardHealer, make_baseline
+
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "app.py"), "w", encoding="utf-8") as fh:
+        fh.write('x = 1\n')
+    make_baseline(d)
+
+    # virus drops a new malicious file
+    with open(os.path.join(d, "evil.py"), "w", encoding="utf-8") as fh:
+        fh.write('import os\nos.system("calc.exe")\n')
+
+    # Default: not reported (avoid false positives on benign new files).
+    h_default = IntegrityGuardHealer()
+    assert len(h_default.detect(d)) == 0
+
+    # Strict mode: reported and quarantined (not hard-deleted).
+    h_strict = IntegrityGuardHealer(detect_new_files=True)
+    faults = h_strict.detect(d)
+    assert len(faults) == 1
+    assert "unexpected file" in faults[0].description
+
+    res = h_strict.repair(faults[0])
+    assert res.changed is True
+    assert not os.path.exists(os.path.join(d, "evil.py"))
+    # Quarantined (reversible), not deleted.
+    q = os.path.join(d, ".quarantine", "evil.py")
+    assert os.path.exists(q)

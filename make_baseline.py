@@ -1,12 +1,16 @@
 """Create a trusted sha256 baseline for a directory.
 
 Usage:
-    python make_baseline.py <target_dir> [--out manifest.json]
+    python make_baseline.py <target_dir> [--out manifest.json] [--with-bytes]
 
 Writes ``<target_dir>/baseline.json`` by default — a manifest of
 {relative_path: sha256} for every in-scope text/source file. Once the baseline
 exists, IntegrityGuardHealer treats ANY deviation from it as a fault and can
 restore the original bytes (when the baseline store includes them).
+
+``--with-bytes`` embeds the trusted bytes of every file under ``__bytes__``
+in the manifest, enabling byte-exact restore WITHOUT git — this is how a
+non-git directory gets full virus-style protection (tamper/delete/add).
 
 This is the "trusted snapshot" that lets the kit self-heal against
 unrecognised modifications / malicious injections.
@@ -15,7 +19,6 @@ unrecognised modifications / malicious injections.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 
@@ -40,24 +43,11 @@ def main(argv=None):
         print(f"错误：目录不存在 {target}")
         return 2
 
-    manifest = make_baseline(target, manifest_path=args.out)
-    if args.with_bytes:
-        # Embed the trusted bytes so repair does not need git.
-        store = {}
-        for rel in manifest:
-            p = os.path.join(target, rel)
-            try:
-                with open(p, "rb") as fh:
-                    store[rel] = fh.read().hex()
-            except Exception:
-                continue
-        manifest_path = args.out or os.path.join(target, "baseline.json")
-        with open(manifest_path, "w", encoding="utf-8", newline="\n") as fh:
-            json.dump({"__bytes__": store, **manifest}, fh, indent=2,
-                      sort_keys=True)
-            fh.write("\n")
-
-    print(f"baseline written: {len(manifest)} files")
+    manifest = make_baseline(target, manifest_path=args.out,
+                             with_bytes=args.with_bytes)
+    n_files = len(manifest) - (1 if "__bytes__" in manifest else 0)
+    print(f"baseline written: {n_files} files"
+          + (" (with embedded bytes)" if args.with_bytes else ""))
     return 0
 
 

