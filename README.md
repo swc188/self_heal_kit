@@ -26,7 +26,7 @@
 
 | 层 | 能力 | 本程序实现 |
 |---|------|-----------|
-| **L1 故障域识别** | 识别高频故障形态 | 6 个 `healer`，每个负责一类确定性故障 |
+| **L1 故障域识别** | 识别高频故障形态 | 7 个 `healer`，每个负责一类确定性故障（含完整性守护） |
 | **L2 闭环自愈** | detect → repair → verify，未绿则重试 | `engine.py` 的闭环循环 |
 | **L3 防退化护栏** | 防假绿 / 防越修越坏 | `snapshot_rollback`（修复前快照，回归即回退）+ `verify_gate`（全绿硬闸门） |
 | **L4 收敛边界** | 不无限自旋、fail-closed 升级人工 | `circuit_breaker`（无进展 / 重复故障集 → 熔断） |
@@ -35,7 +35,7 @@
 
 ---
 
-## 三、内置 6 个 Healer（L1 故障域）
+## 三、内置 7 个 Healer（L1 故障域）
 
 | # | 名称 | 文件 | 故障域 | 修复动作 |
 |---|------|------|--------|----------|
@@ -45,6 +45,7 @@
 | H4 | 引号配对 | `healers/quote_balance.py` | 双引号不平衡 | 补 `"` 配对 |
 | H5 | 键映射缺口 | `healers/key_map_gap.py` | 别名表标准键为空 | 按内置别名表补标准键 |
 | H6 | 声明↔实现 | `healers/decl_impl.py` | README 版本 ≠ 代码版本 | 以 README 为准对齐 `__version__` |
+| H7 | 完整性守护 | `healers/integrity_guard.py` | 文件字节偏离可信基线（含逻辑注入） | 从基线恢复原始字节 |
 
 ---
 
@@ -78,8 +79,9 @@ self_heal_kit/
 │   └── verify_gate.py     # L3 全绿闸门（+ test_command 钩子）
 ├── fixtures/              # 故意损坏样本（由 make_fixtures.py 生成）
 ├── make_fixtures.py       # 生成损坏样本
+├── make_baseline.py       # 生成 H7 可信基线（sha256 清单）
 ├── self_test.py           # 自愈演示：场景 A 已自愈 / B 熔断 / C 钩子
-├── tests/                 # pytest 回归（14 条）
+├── tests/                 # pytest 回归（17 条）
 ├── .gitignore
 └── .gitattributes         # 强制仓库 LF（避免 Windows 把源码 checkout 成 CRLF）
 ```
@@ -113,7 +115,7 @@ python3 self_test.py
 
 ### 3. 跑回归测试
 ```bash
-python3 -m pytest tests/ -q     # 期望：14 passed
+python3 -m pytest tests/ -q     # 期望：17 passed
 ```
 
 ### 4. 当作库，对任意目录体检
@@ -153,4 +155,5 @@ res = eng.run("/目标/目录")
 - **确定性优先**：所有修复都靠规则 + 验收断言，不靠"猜"。
 - **不伪造修复**：修不了就熔断升级人工，绝不说"全绿"。
 - **可回退**：任何修复若没能消除故障，立刻回滚到修复前快照。
-- **已知边界**：本程序只处理**格式 / 字符类**确定性故障；不修复业务逻辑错误、不证明算法正确性、不联网安装工具链。
+- **完整性守护（H7）**：以 git HEAD（或 `baseline.json`）为可信基线，任何文件字节偏离都会被检测并从基线恢复——包括**语法正确的恶意逻辑注入**（格式 healer 认不出的修改）。
+- **已知边界**：H1–H6 只处理**格式 / 字符类**确定性故障；H7 依赖可信基线（git 仓库或 `make_baseline.py` 生成的 `baseline.json`），没有基线时 H7 静默（不误报）。本程序不修复业务逻辑错误、不证明算法正确性、不联网安装工具链。

