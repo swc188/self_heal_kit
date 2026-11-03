@@ -12,25 +12,36 @@ Trusted baseline sources, in priority order:
   2. Git HEAD blobs — for a git worktree, the committed version of each tracked
      source file is the canonical "healthy" state.
 
-Detection: scan the same text extensions as the other healers, compute sha256,
-and compare with the baseline. Any missing / changed file is a fault. When
-``detect_new_files=True`` (strict mode), files that exist on disk but are NOT
-in the baseline are also reported — this catches viruses that drop new
-malicious files into the program directory.
+Detection covers, relative to a trusted baseline, four fault kinds:
+  * TAMPER  — a baseline file's bytes changed (incl. syntactically-valid
+              malicious logic injections that format healers cannot see).
+  * DELETE  — a baseline file is missing on disk.
+  * ADD     — a file exists that is NOT in the baseline (strict mode only,
+              with a whitelist of known-good new artefacts to avoid false
+              positives on benign additions).
+  * SEAL    — the baseline manifest itself was tampered (its hash seal does
+              not match), which would otherwise silently defeat TAMPER/DELETE.
 
-Repair: restore the baseline bytes (from baseline store or ``git show``).
-This is deterministic and makes ANY detected modification repairable —
-including syntactically-valid malicious logic injections. Deleted files are
-recreated (parents included). Unexpected new files (strict mode) are moved to
-a ``.quarantine/`` folder instead of being hard-deleted, so the action is
-reversible and safe.
+Repair:
+  * TAMPER / DELETE -> restore the baseline bytes (from ``__bytes__`` or git
+    HEAD). Deterministic, makes ANY detected modification repairable.
+  * ADD -> move to ``.quarantine/`` instead of hard-deleting (reversible).
+  * SEAL -> restore ``baseline.json`` from git HEAD when available.
 
 Scope mirrors the kit's other healers: production source only; demo/scratch
 directories and tool caches are excluded (see base._SKIP_DIRS).
+
+Known limits (honest): the seal protects against accidental corruption and
+unsophisticated tampering of the manifest; a sophisticated attacker who edits
+both the target file AND the manifest hash AND the seal can defeat it — true
+root-of-trust needs an external key / out-of-band storage. Likewise, files
+outside ``_TEXT_EXTS`` / ``_SKIP_DIRS``, runtime-memory injection, permissions
+and symlink substitution are out of scope (see README).
 """
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 import os
@@ -38,12 +49,32 @@ import subprocess
 
 from .base import Healer, Fault, RepairResult
 
+# Extended scope: source / config / script files whose integrity matters.
+# (Binaries are excluded by base._BINARY_EXTS and never scanned.)
 _TEXT_EXTS = (".py", ".txt", ".yaml", ".yml", ".json", ".toml", ".cfg", ".ini",
-              ".md", ".csv")
+              ".md", ".csv", ".xml", ".html", ".css", ".env",
+              ".sh", ".bat", ".cmd", ".ps1")
 
 # Quarantine dir for unexpected files removed in strict mode.  Also added to
 # base._SKIP_DIRS so the engine never scans/re-pairs quarantined files.
 _QUARANTINE_DIR = ".quarantine"
+
+# Default whitelist of path patterns that are NOT treated as malicious "new"
+# files even in strict mode. These are volatile / generated / known-safe
+# artefacts. A genuinely unexpected new file (e.g. a dropped evil.py) is still
+# flagged. Patterns:
+#   "x/"        -> any file at or under directory x
+#   "*.ext"     -> any file with that extension, anywhere
+#   "exact/rel" -> an exact relative path
+DEFAULT_NEW_FILE_WHITELIST = {
+    "baseline.json",
+    "*.log", "*.tmp", "*.bak", "*.swp", "*.orig", "*.pyc", "*.pyo",
+    ".venv/", "venv/", "env/", "node_modules/",
+    "dist/", "build/", "__pycache__/", ".pytest_cache/", ".mypy_cache/",
+    ".tox/", ".git/", "work/", ".quarantine/", ".workbuddy/",
+    "fixtures/", "demo_project/", "analysis/", "docs/",
+    "examples/", "testdata/", "sample_data/",
+}
 
 
 def _sha256_bytes(data: bytes) -> str:
@@ -98,23 +129,43 @@ def _git_show_blob(repo: str, relpath: str) -> bytes | None:
     return None
 
 
+def _seal_manifest(manifest: dict) -> str:
+    """Hash-seal the manifest (excluding the seal and embedded bytes).
+
+    Tampering with any tracked file's hash in the manifest breaks this seal,
+    so an attacker cannot silently re-point the baseline at malicious bytes.
+    ``__bytes__`` is excluded from the seal to keep it stable / lightweight.
+    """
+    core = {k: v for k, v in manifest.items()
+            if k not in ("__seal__", "__bytes__")}
+    canonical = json.dumps(core, sort_keys=True, separators=(",", ":"),
+                           ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _load_baseline_manifest(target_dir: str) -> dict | None:
     p = os.path.join(target_dir, "baseline.json")
     if not os.path.isfile(p):
         return None
     try:
         with open(p, "r", encoding="utf-8") as fh:
-            return json.load(fh)
+            data = json.load(fh)
     except Exception:
         return None
+    if isinstance(data, dict) and "__seal__" in data:
+        if data.get("__seal__") != _seal_manifest(data):
+            data = dict(data)
+            data["__tampered__"] = True
+    return data
 
 
 def make_baseline(target_dir: str, manifest_path: str | None = None,
                   exts=_TEXT_EXTS, with_bytes: bool = False) -> dict:
     """Compute a sha256 baseline for all in-scope text files under target_dir.
 
-    Returns the manifest dict ``{relpath: sha256}`` and optionally writes it to
-    ``manifest_path`` (default: ``<target_dir>/baseline.json``).
+    Returns the manifest dict ``{relpath: sha256}`` and writes it to
+    ``manifest_path`` (default: ``<target_dir>/baseline.json``). The manifest is
+    hash-sealed (``__seal__``) so that tampering with it is itself detectable.
 
     When ``with_bytes`` is True the manifest also embeds the trusted bytes of
     every file under ``__bytes__``, enabling byte-exact restore without git.
@@ -138,7 +189,9 @@ def make_baseline(target_dir: str, manifest_path: str | None = None,
                     store[rel] = fh.read().hex()
             except Exception:
                 continue
-        manifest = {"__bytes__": store, **manifest}
+        manifest["__bytes__"] = store
+    # Seal AFTER assembling all entries (incl. __bytes__).
+    manifest["__seal__"] = _seal_manifest(manifest)
     if manifest_path is None:
         manifest_path = os.path.join(target_dir, "baseline.json")
     with open(manifest_path, "w", encoding="utf-8", newline="\n") as fh:
@@ -157,16 +210,39 @@ def _decode_bytes(raw) -> bytes | None:
     return raw if isinstance(raw, bytes) else None
 
 
+def _is_whitelisted(rel: str, whitelist) -> bool:
+    for pat in whitelist:
+        if pat.endswith("/"):
+            if rel == pat[:-1] or rel.startswith(pat):
+                return True
+        elif pat.startswith("*."):
+            if rel.endswith(pat[1:]):
+                return True
+        else:
+            if rel == pat:
+                return True
+    return False
+
+
 class IntegrityGuardHealer(Healer):
     name = "integrity_guard"
 
     def __init__(self, baseline: dict | None = None,
-                 detect_new_files: bool = False):
+                 detect_new_files: bool = False,
+                 new_file_whitelist: set | None = None):
         # If a baseline dict is injected (tests / runtime), it wins.
         self._baseline = baseline
         # Strict mode: files not present in the baseline are reported as
         # faults too (catches viruses dropping new malicious files).
         self.detect_new_files = detect_new_files
+        # Whitelist of known-good new file patterns (strict mode only).
+        self.new_file_whitelist = new_file_whitelist
+        # Set during detect() when the on-disk manifest seal is broken.
+        self._baseline_tampered = False
+
+    # -- helpers -------------------------------------------------------------
+    def _eff_whitelist(self):
+        return self.new_file_whitelist or DEFAULT_NEW_FILE_WHITELIST
 
     # -- baseline resolution ------------------------------------------------
     def _resolve_baseline(self, target_dir: str) -> dict | None:
@@ -207,7 +283,16 @@ class IntegrityGuardHealer(Healer):
     def _baseline_bytes(self, target_dir: str, relpath: str) -> bytes | None:
         """Return trusted bytes for one baseline entry.
 
-        Priority: injected baseline dict -> baseline.json on disk -> git HEAD.
+        Priority: injected baseline dict -> baseline.json on disk (trusted
+        unless its seal is broken) -> git HEAD (last resort).
+
+        This mirrors ``_resolve_baseline``: when a ``baseline.json`` governs
+        the target, its embedded ``__bytes__`` are authoritative; git HEAD is
+        only used when no trusted disk baseline exists. Preferring the disk
+        manifest over git HEAD matters because a target may sit *inside* a git
+        repo (e.g. a drill copy under ``work/``) while carrying its own
+        ``baseline.json`` — using the outer repo's HEAD bytes would restore
+        out-of-sync content and the repair would never converge.
         """
         # 1. Injected baseline dict (tests / runtime).
         if self._baseline is not None:
@@ -216,19 +301,22 @@ class IntegrityGuardHealer(Healer):
                 data = _decode_bytes(raw)
                 if data is not None:
                     return data
-        # 2. baseline.json on disk (with embedded bytes).
-        manifest = _load_baseline_manifest(target_dir)
-        if manifest is not None:
-            raw = manifest.get("__bytes__", {}).get(relpath)
-            if raw is not None:
-                data = _decode_bytes(raw)
-                if data is not None:
-                    return data
-        # 3. git HEAD blob. Allow subdirectory faults (e.g. --self scanning
-        #    its own tests/) as long as the file is tracked in that repo.
+        # 2. baseline.json on disk (trusted unless its seal is broken).
+        if not self._baseline_tampered:
+            manifest = _load_baseline_manifest(target_dir)
+            if manifest is not None:
+                raw = manifest.get("__bytes__", {}).get(relpath)
+                if raw is not None:
+                    data = _decode_bytes(raw)
+                    if data is not None:
+                        return data
+        # 3. git HEAD blob (last resort). Used when no trusted disk baseline
+        #    exists and the file is tracked in the enclosing repo.
         repo = _git_root(target_dir)
         if repo:
-            return _git_show_blob(repo, relpath)
+            blob = _git_show_blob(repo, relpath)
+            if blob is not None:
+                return blob
         return None
 
     # -- detect -------------------------------------------------------------
@@ -239,7 +327,15 @@ class IntegrityGuardHealer(Healer):
             # No baseline available -> cannot assert integrity (not a fault).
             return faults
 
-        # Build the set of files we can meaningfully check.
+        # Trust-anchor fault: the manifest itself was tampered.
+        self._baseline_tampered = bool(baseline.get("__tampered__"))
+        if self._baseline_tampered:
+            faults.append(Fault(
+                self.name, os.path.join(target_dir, "baseline.json"),
+                "integrity deviation: baseline.json seal mismatch — "
+                "trust anchor compromised"))
+
+        # Files present on disk: TAMPER (changed) or ADD (unexpected, strict).
         seen = set()
         for p in self._iter_text_files(target_dir, exts=_TEXT_EXTS):
             rel = os.path.relpath(p, target_dir).replace("\\", "/")
@@ -250,7 +346,8 @@ class IntegrityGuardHealer(Healer):
             expected = baseline.get(rel)
             if expected is None:
                 # File not in baseline.
-                if self.detect_new_files:
+                if self.detect_new_files and not _is_whitelisted(
+                        rel, self._eff_whitelist()):
                     faults.append(Fault(
                         self.name, p,
                         f"unexpected file not in baseline ({rel})"))
@@ -262,9 +359,9 @@ class IntegrityGuardHealer(Healer):
                     f"integrity deviation: sha256 {actual[:12]} != "
                     f"baseline {expected[:12]}"))
 
-        # Files present in baseline but missing on disk.
+        # Files present in baseline but missing on disk (DELETE).
         for rel, expected in baseline.items():
-            if rel == "__bytes__":
+            if rel in ("__bytes__", "__seal__", "__tampered__"):
                 continue
             p = os.path.join(target_dir, rel)
             if not os.path.exists(p):
@@ -283,6 +380,25 @@ class IntegrityGuardHealer(Healer):
                                 "baseline.json found)")
 
         rel = os.path.relpath(fault.path, base_dir).replace("\\", "/")
+
+        # Trust-anchor fault: try to restore baseline.json from git HEAD.
+        if fault.description.startswith(
+                "integrity deviation: baseline.json seal mismatch"):
+            repo = _git_root(base_dir)
+            if repo:
+                blob = _git_show_blob(repo, rel)  # rel == "baseline.json"
+                if blob is not None:
+                    try:
+                        with open(fault.path, "wb") as fh:
+                            fh.write(blob)
+                        return RepairResult(self.name, fault.path, True,
+                                            "restored baseline.json from git HEAD")
+                    except Exception as e:
+                        return RepairResult(self.name, fault.path, False,
+                                            f"write failed: {e}")
+            return RepairResult(self.name, fault.path, False,
+                                "baseline.json tampered and no git source to "
+                                "restore from")
 
         # Unexpected new file (strict mode) -> quarantine instead of delete.
         if fault.description.startswith("unexpected file not in baseline"):

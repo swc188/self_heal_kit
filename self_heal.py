@@ -23,7 +23,8 @@ def _build_engine(test_command=None):
     return SelfHealEngine(test_command=test_command)
 
 
-def self_heal(target, run_tests=True, test_command=None):
+def self_heal(target, run_tests=True, test_command=None,
+              integrity_strict=True):
     from engine import SelfHealEngine
 
     if test_command is None and run_tests:
@@ -32,7 +33,8 @@ def self_heal(target, run_tests=True, test_command=None):
         # 若对整个根目录跑 pytest 会触发 import 冲突（exit 2），
         # 那不属于可自愈的格式故障，因此只收集主测试套件。
         test_command = [sys.executable, "-m", "pytest", "-q", "tests/"]
-    eng = SelfHealEngine(test_command=test_command)
+    eng = SelfHealEngine(test_command=test_command,
+                         integrity_strict=integrity_strict)
     res = eng.run(target)
     return res
 
@@ -43,6 +45,8 @@ def main(argv=None):
     parser.add_argument("--target", default=None, help="目标目录（与 --self 二选一）")
     parser.add_argument("--no-test", action="store_true", help="不跑测试（只修文件）")
     parser.add_argument("--test-command", default=None, help="自定义验收命令")
+    parser.add_argument("--no-strict", action="store_true",
+                        help="关闭严格模式（不检测'新增文件'，仅检测篡改/删除）")
     args = parser.parse_args(argv)
 
     if args.self:
@@ -62,7 +66,8 @@ def main(argv=None):
     print("=" * 70)
 
     res = self_heal(target, run_tests=not args.no_test,
-                    test_command=args.test_command)
+                    test_command=args.test_command,
+                    integrity_strict=not args.no_strict)
     print(f"\nRESULT: {res['status']}")
     if res["status"] == "HEALED":
         print(f"  rounds: {res['rounds']}")

@@ -14,6 +14,9 @@ Thumbs.db
 work/
 tmp/
 
+# Quarantined unexpected files (strict-mode isolation, reversible)
+.quarantine/
+
 # Isolated virtual environment (created in-dir, not committed)
 .venv/
 venv/

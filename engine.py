@@ -31,16 +31,30 @@ from guards.verify_gate import VerifyGate, is_green
 
 class SelfHealEngine:
     def __init__(self, healers=None, max_rounds: int = 6, patience: int = 3,
-                 test_command: str = None):
-        self.healers = healers or [
-            LineEndingHealer(),
-            BraceEscapeHealer(),
-            YamlFormatHealer(),
-            QuoteBalanceHealer(),
-            KeyMapGapHealer(),
-            DeclImplHealer(),
-            IntegrityGuardHealer(),
-        ]
+                 test_command: str = None, integrity_strict: bool = True,
+                 integrity_whitelist=None):
+        # integrity_strict: H7 reports unexpected new files (virus-dropped
+        # files) by default. A whitelist of known-good new artefacts keeps it
+        # from false-positiving on benign additions; pass integrity_strict=False
+        # to disable (legacy behaviour).
+        self.integrity_strict = integrity_strict
+        self.integrity_whitelist = integrity_whitelist
+        if healers is None:
+            from healers.integrity_guard import (
+                IntegrityGuardHealer, DEFAULT_NEW_FILE_WHITELIST)
+            healers = [
+                LineEndingHealer(),
+                BraceEscapeHealer(),
+                YamlFormatHealer(),
+                QuoteBalanceHealer(),
+                KeyMapGapHealer(),
+                DeclImplHealer(),
+                IntegrityGuardHealer(
+                    detect_new_files=integrity_strict,
+                    new_file_whitelist=integrity_whitelist
+                    or DEFAULT_NEW_FILE_WHITELIST),
+            ]
+        self.healers = healers
         self.max_rounds = max_rounds
         self.patience = patience
         # The verify gate may delegate to a real project test suite. The

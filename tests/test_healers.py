@@ -1,7 +1,10 @@
 """Unit tests for the three core healers (H1/H2/H3)."""
 
 import csv
+import hashlib
+import json
 import os
+import subprocess
 import sys
 import tempfile
 
@@ -283,3 +286,146 @@ def test_h7_detect_new_files_strict_mode():
     # Quarantined (reversible), not deleted.
     q = os.path.join(d, ".quarantine", "evil.py")
     assert os.path.exists(q)
+
+
+def test_h7_seal_detects_tampered_baseline():
+    """Editing baseline.json to hide a tamper breaks the hash seal.
+
+    This is the trust-anchor case: an attacker changes app.py AND rewrites the
+    baseline hash to match, but cannot recompute the seal -> the tamper is
+    still caught (the seal, not the per-file hash, is the anchor).
+    """
+    from healers.integrity_guard import IntegrityGuardHealer, make_baseline
+
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "app.py"), "w", encoding="utf-8") as fh:
+        fh.write('x = 1\n')
+    make_baseline(d)  # hash-sealed
+
+    # Attacker tampers app.py AND rewrites the baseline hash to match it,
+    # but does NOT recompute __seal__ (sophisticated attackers would; the
+    # seal stops unsophisticated / accidental tampering of the manifest).
+    with open(os.path.join(d, "app.py"), "a", encoding="utf-8") as fh:
+        fh.write('x = 2\n')
+    p = os.path.join(d, "baseline.json")
+    with open(p, "r", encoding="utf-8") as fh:
+        manifest = json.load(fh)
+    manifest["app.py"] = hashlib.sha256(b'x = 1\nx = 2\n').hexdigest()
+    with open(p, "w", encoding="utf-8") as fh:
+        json.dump(manifest, fh, indent=2, sort_keys=True)
+
+    h = IntegrityGuardHealer()
+    faults = h.detect(d)
+    assert any("seal mismatch" in f.description for f in faults), faults
+
+
+def test_h7_whitelist_allows_known_new_files():
+    """Whitelisted new artefacts (logs, build dirs) are NOT flagged."""
+    from healers.integrity_guard import IntegrityGuardHealer, make_baseline
+
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "app.py"), "w", encoding="utf-8") as fh:
+        fh.write('x = 1\n')
+    make_baseline(d)
+
+    # Benign new artefacts that match the default whitelist.
+    with open(os.path.join(d, "run.log"), "w", encoding="utf-8") as fh:
+        fh.write("info\n")
+    os.makedirs(os.path.join(d, "dist"))
+    with open(os.path.join(d, "dist", "bundle.py"), "w", encoding="utf-8") as fh:
+        fh.write("y = 9\n")
+
+    h = IntegrityGuardHealer(detect_new_files=True)
+    faults = h.detect(d)
+    assert faults == [], faults
+
+
+def test_h7_flaggs_unwhitelisted_new_file_despite_whitelist():
+    """A dropped evil.py is still flagged even with the default whitelist."""
+    from healers.integrity_guard import IntegrityGuardHealer, make_baseline
+
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "app.py"), "w", encoding="utf-8") as fh:
+        fh.write('x = 1\n')
+    make_baseline(d)
+    with open(os.path.join(d, "evil.py"), "w", encoding="utf-8") as fh:
+        fh.write('import os\nos.system("calc.exe")\n')
+
+    h = IntegrityGuardHealer(detect_new_files=True)
+    faults = h.detect(d)
+    assert len(faults) == 1 and "unexpected file" in faults[0].description
+
+
+def test_h7_covers_extended_extensions():
+    """Tampered .sh / .env / .html files are detected (extended scope)."""
+    from healers.integrity_guard import IntegrityGuardHealer, make_baseline
+
+    d = tempfile.mkdtemp()
+    specs = (("build.sh", "echo hi\n"),
+             (".env", "KEY=1\n"),
+             ("page.html", "<html></html>\n"))
+    for name, content in specs:
+        with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
+            fh.write(content)
+    make_baseline(d, with_bytes=True)
+
+    extras = (("build.sh", "rm -rf /\n"),
+              (".env", "KEY=2\n"),
+              ("page.html", "<script>x</script>\n"))
+    for name, extra in extras:
+        with open(os.path.join(d, name), "a", encoding="utf-8") as fh:
+            fh.write(extra)
+
+    h = IntegrityGuardHealer()
+    faults = h.detect(d)
+    rels = {os.path.relpath(f.path, d) for f in faults}
+    assert {"build.sh", ".env", "page.html"} <= rels, rels
+
+
+def test_h7_disk_bytes_preferred_over_git_head():
+    """Regression: when a target sits inside a git repo but carries its own
+    baseline.json, repair must restore from the disk ``__bytes__`` (the
+    baseline), NOT the outer repo's git HEAD.
+
+    The bug: ``_baseline_bytes`` preferred git HEAD over the disk manifest, so
+    a drill copy under ``work/`` (inside the kit's git repo) was restored to
+    the out-of-sync HEAD content and never converged (1 residual fault).
+    """
+    import shutil
+
+    from healers.integrity_guard import IntegrityGuardHealer, make_baseline
+
+    d = tempfile.mkdtemp()
+    # Stand up a real git repo whose HEAD version of app.py differs from the
+    # version embedded in baseline.json.
+    subprocess.run(["git", "init", "-q"], cwd=d, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=d, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=d, check=True)
+    app = os.path.join(d, "app.py")
+    with open(app, "w", encoding="utf-8") as fh:
+        fh.write("HEAD_VERSION\n")          # committed to git HEAD
+    subprocess.run(["git", "add", "-A"], cwd=d, check=True)
+    subprocess.run(["git", "commit", "-qm", "init"], cwd=d, check=True)
+
+    # baseline.json embeds a DIFFERENT trusted version.
+    with open(app, "w", encoding="utf-8") as fh:
+        fh.write("BASELINE_VERSION\n")
+    make_baseline(d, with_bytes=True)
+
+    # Tamper the working file.
+    with open(app, "a", encoding="utf-8") as fh:
+        fh.write("TAMPER\n")
+
+    h = IntegrityGuardHealer()
+    faults = h.detect(d)
+    assert len(faults) == 1, faults
+    res = h.repair(faults[0])
+    assert res.changed is True
+
+    # Must be restored to BASELINE_VERSION (disk bytes), not HEAD_VERSION.
+    with open(app, encoding="utf-8") as fh:
+        content = fh.read()
+    assert content == "BASELINE_VERSION\n", content
+    # And the repair must converge — no residual integrity fault.
+    assert h.detect(d) == [], "repair did not converge to baseline"
+

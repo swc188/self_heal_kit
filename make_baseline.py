@@ -45,9 +45,10 @@ def main(argv=None):
 
     manifest = make_baseline(target, manifest_path=args.out,
                              with_bytes=args.with_bytes)
-    n_files = len(manifest) - (1 if "__bytes__" in manifest else 0)
+    n_files = sum(1 for k in manifest if not k.startswith("__"))
     print(f"baseline written: {n_files} files"
-          + (" (with embedded bytes)" if args.with_bytes else ""))
+          + (" (with embedded bytes, hash-sealed)" if args.with_bytes
+             else " (hash-sealed)"))
     return 0
 
 
