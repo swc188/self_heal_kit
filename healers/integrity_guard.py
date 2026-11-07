@@ -45,9 +45,10 @@ import fnmatch
 import hashlib
 import json
 import os
+import stat
 import subprocess
 
-from .base import Healer, Fault, RepairResult
+from .base import Healer, Fault, RepairResult, _BINARY_EXTS
 
 # Extended scope: source / config / script files whose integrity matters.
 # (Binaries are excluded by base._BINARY_EXTS and never scanned.)
@@ -160,15 +161,25 @@ def _load_baseline_manifest(target_dir: str) -> dict | None:
 
 
 def make_baseline(target_dir: str, manifest_path: str | None = None,
-                  exts=_TEXT_EXTS, with_bytes: bool = False) -> dict:
-    """Compute a sha256 baseline for all in-scope text files under target_dir.
+                  exts=_TEXT_EXTS, with_bytes: bool = False,
+                  scan_binaries: bool = False,
+                  check_metadata: bool = False) -> dict:
+    """Compute a sha256 baseline for all in-scope files under target_dir.
 
     Returns the manifest dict ``{relpath: sha256}`` and writes it to
     ``manifest_path`` (default: ``<target_dir>/baseline.json``). The manifest is
     hash-sealed (``__seal__``) so that tampering with it is itself detectable.
 
-    When ``with_bytes`` is True the manifest also embeds the trusted bytes of
-    every file under ``__bytes__``, enabling byte-exact restore without git.
+    Options:
+      * ``with_bytes`` — also embed the trusted bytes of every file under
+        ``__bytes__``, enabling byte-exact restore WITHOUT git.
+      * ``scan_binaries`` — also include binary artefacts (``.exe``/``.dll``/
+        ``.so``/``.bin``/...) in the baseline so they get integrity protection
+        too. By default binaries are skipped (they rarely change and bloat the
+        manifest).
+      * ``check_metadata`` — additionally record each file's permission mode and
+        whether it is a symlink under ``__meta__``; deviations are then detected
+        and the permission mode is auto-restored.
     """
     from .base import _SKIP_DIRS
     manifest = {}
@@ -176,13 +187,32 @@ def make_baseline(target_dir: str, manifest_path: str | None = None,
         dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
         for fn in files:
             p = os.path.join(root, fn)
-            if not any(p.endswith(e) for e in exts):
-                continue
+            if not scan_binaries:
+                # Default: skip binaries and only keep known text/source exts.
+                if any(p.endswith(e) for e in _BINARY_EXTS):
+                    continue
+                if not any(p.endswith(e) for e in exts):
+                    continue
             rel = os.path.relpath(p, target_dir).replace("\\", "/")
             manifest[rel] = _sha256_file(p)
+    if check_metadata:
+        meta = {}
+        for rel in manifest:
+            p = os.path.join(target_dir, rel)
+            try:
+                st = os.lstat(p)
+                meta[rel] = {
+                    "mode": stat.S_IMODE(st.st_mode),
+                    "link": os.path.islink(p),
+                }
+            except Exception:
+                continue
+        manifest["__meta__"] = meta
     if with_bytes:
         store = {}
         for rel in manifest:
+            if rel.startswith("__"):
+                continue
             p = os.path.join(target_dir, rel)
             try:
                 with open(p, "rb") as fh:
@@ -190,7 +220,7 @@ def make_baseline(target_dir: str, manifest_path: str | None = None,
             except Exception:
                 continue
         manifest["__bytes__"] = store
-    # Seal AFTER assembling all entries (incl. __bytes__).
+    # Seal AFTER assembling all entries (incl. __meta__ and __bytes__).
     manifest["__seal__"] = _seal_manifest(manifest)
     if manifest_path is None:
         manifest_path = os.path.join(target_dir, "baseline.json")
@@ -229,7 +259,9 @@ class IntegrityGuardHealer(Healer):
 
     def __init__(self, baseline: dict | None = None,
                  detect_new_files: bool = False,
-                 new_file_whitelist: set | None = None):
+                 new_file_whitelist: set | None = None,
+                 scan_binaries: bool = False,
+                 check_metadata: bool = False):
         # If a baseline dict is injected (tests / runtime), it wins.
         self._baseline = baseline
         # Strict mode: files not present in the baseline are reported as
@@ -237,6 +269,10 @@ class IntegrityGuardHealer(Healer):
         self.detect_new_files = detect_new_files
         # Whitelist of known-good new file patterns (strict mode only).
         self.new_file_whitelist = new_file_whitelist
+        # Include binary artefacts (.exe/.dll/.so/...) in integrity scope.
+        self.scan_binaries = scan_binaries
+        # Detect/restore permission-mode and symlink-substitution changes.
+        self.check_metadata = check_metadata
         # Set during detect() when the on-disk manifest seal is broken.
         self._baseline_tampered = False
 
@@ -337,7 +373,9 @@ class IntegrityGuardHealer(Healer):
 
         # Files present on disk: TAMPER (changed) or ADD (unexpected, strict).
         seen = set()
-        for p in self._iter_text_files(target_dir, exts=_TEXT_EXTS):
+        scan_exts = None if self.scan_binaries else _TEXT_EXTS
+        for p in self._iter_text_files(target_dir, exts=scan_exts,
+                                       exclude_binary=not self.scan_binaries):
             rel = os.path.relpath(p, target_dir).replace("\\", "/")
             if rel == "baseline.json":
                 # The manifest itself is metadata, not program source.
@@ -359,9 +397,40 @@ class IntegrityGuardHealer(Healer):
                     f"integrity deviation: sha256 {actual[:12]} != "
                     f"baseline {expected[:12]}"))
 
+        # Metadata deviations (permission mode / symlink substitution).
+        if self.check_metadata:
+            meta = baseline.get("__meta__") or {}
+            for rel, m in meta.items():
+                p = os.path.join(target_dir, rel)
+                if not os.path.exists(p):
+                    continue  # missing file handled by DELETE branch below
+                try:
+                    st = os.lstat(p)
+                    is_link = os.path.islink(p)
+                    was_link = m.get("link", False)
+                    if was_link and not is_link:
+                        faults.append(Fault(
+                            self.name, p,
+                            f"metadata deviation: baseline symlink {rel} "
+                            f"replaced by a regular file"))
+                        continue
+                    if (not was_link) and is_link:
+                        faults.append(Fault(
+                            self.name, p,
+                            f"metadata deviation: {rel} replaced by a symlink"))
+                        continue
+                    if stat.S_IMODE(st.st_mode) != m.get("mode"):
+                        faults.append(Fault(
+                            self.name, p,
+                            "metadata deviation: permission mode changed "
+                            f"{oct(stat.S_IMODE(st.st_mode))} != baseline "
+                            f"{oct(m.get('mode'))}"))
+                except Exception:
+                    continue
+
         # Files present in baseline but missing on disk (DELETE).
         for rel, expected in baseline.items():
-            if rel in ("__bytes__", "__seal__", "__tampered__"):
+            if rel in ("__bytes__", "__seal__", "__tampered__", "__meta__"):
                 continue
             p = os.path.join(target_dir, rel)
             if not os.path.exists(p):
@@ -404,6 +473,10 @@ class IntegrityGuardHealer(Healer):
         if fault.description.startswith("unexpected file not in baseline"):
             return self._quarantine_file(fault.path, base_dir, rel)
 
+        # Metadata deviation (permission mode / symlink substitution).
+        if fault.description.startswith("metadata deviation:"):
+            return self._repair_metadata(fault, base_dir, rel)
+
         data = self._baseline_bytes(base_dir, rel)
         if data is None:
             return RepairResult(self.name, fault.path, False,
@@ -432,6 +505,49 @@ class IntegrityGuardHealer(Healer):
                                 f"quarantine failed: {e}")
         return RepairResult(self.name, path, True,
                             f"quarantined unexpected file {rel}")
+
+    def _repair_metadata(self, fault: Fault, base_dir: str,
+                         rel: str) -> RepairResult:
+        """Restore permission mode, or undo a symlink substitution."""
+        manifest = self._resolve_baseline(base_dir)
+        if manifest is None:
+            return RepairResult(self.name, fault.path, False,
+                                "cannot locate trusted baseline metadata")
+        m = (manifest.get("__meta__") or {}).get(rel)
+        if m is None:
+            return RepairResult(self.name, fault.path, False,
+                                "no baseline metadata for this file")
+
+        if "permission mode changed" in fault.description:
+            try:
+                os.chmod(fault.path, m["mode"])
+                return RepairResult(self.name, fault.path, True,
+                                    f"restored permission mode {oct(m['mode'])}")
+            except Exception as e:
+                return RepairResult(self.name, fault.path, False,
+                                    f"chmod failed: {e}")
+
+        if "symlink" in fault.description:
+            # Restore the trusted bytes as a regular file (undo link swap).
+            data = self._baseline_bytes(base_dir, rel)
+            if data is None:
+                return RepairResult(self.name, fault.path, False,
+                                    "no trusted baseline bytes to restore")
+            try:
+                if os.path.islink(fault.path) or os.path.exists(fault.path):
+                    os.remove(fault.path)
+                os.makedirs(os.path.dirname(fault.path), exist_ok=True)
+                with open(fault.path, "wb") as fh:
+                    fh.write(data)
+                os.chmod(fault.path, m["mode"])
+                return RepairResult(self.name, fault.path, True,
+                                    "restored regular file from baseline "
+                                    "(link substitution undone)")
+            except Exception as e:
+                return RepairResult(self.name, fault.path, False,
+                                    f"restore failed: {e}")
+        return RepairResult(self.name, fault.path, False,
+                            "unrecognized metadata fault")
 
     def _find_target_root(self, path: str) -> str | None:
         """Find the directory whose baseline.json / git root governs ``path``.

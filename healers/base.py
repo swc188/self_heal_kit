@@ -66,14 +66,15 @@ class Healer:
         raise NotImplementedError
 
     # -- helpers -------------------------------------------------------------
-    def _iter_text_files(self, target_dir: str, exts=None) -> List[str]:
+    def _iter_text_files(self, target_dir: str, exts=None,
+                         exclude_binary: bool = True) -> List[str]:
         out: List[str] = []
         for root, dirs, files in os.walk(target_dir):
             # 剪枝：跳过工具/缓存目录（不进入）
             dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
             for fn in files:
                 p = os.path.join(root, fn)
-                if any(p.endswith(e) for e in _BINARY_EXTS):
+                if exclude_binary and any(p.endswith(e) for e in _BINARY_EXTS):
                     continue
                 if exts is not None and not any(p.endswith(e) for e in exts):
                     continue

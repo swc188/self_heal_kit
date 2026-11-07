@@ -36,6 +36,11 @@ def main(argv=None):
     parser.add_argument("--with-bytes", action="store_true",
                         help="also embed trusted file bytes in the manifest "
                              "(enables byte-exact restore without git)")
+    parser.add_argument("--scan-binaries", action="store_true",
+                        help="also baseline binary artefacts (.exe/.dll/.so/...)")
+    parser.add_argument("--check-metadata", action="store_true",
+                        help="also record+protect file permission mode and "
+                             "symlink status")
     args = parser.parse_args(argv)
 
     target = os.path.abspath(args.target)
@@ -44,11 +49,20 @@ def main(argv=None):
         return 2
 
     manifest = make_baseline(target, manifest_path=args.out,
-                             with_bytes=args.with_bytes)
+                             with_bytes=args.with_bytes,
+                             scan_binaries=args.scan_binaries,
+                             check_metadata=args.check_metadata)
     n_files = sum(1 for k in manifest if not k.startswith("__"))
-    print(f"baseline written: {n_files} files"
-          + (" (with embedded bytes, hash-sealed)" if args.with_bytes
-             else " (hash-sealed)"))
+    flags = []
+    if args.with_bytes:
+        flags.append("embedded bytes")
+    if args.scan_binaries:
+        flags.append("+binaries")
+    if args.check_metadata:
+        flags.append("+metadata")
+    flags_str = (" (" + ", ".join(flags) + ", hash-sealed)"
+                 if flags else " (hash-sealed)")
+    print(f"baseline written: {n_files} files" + flags_str)
     return 0
 
 

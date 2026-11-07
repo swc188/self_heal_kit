@@ -429,3 +429,97 @@ def test_h7_disk_bytes_preferred_over_git_head():
     # And the repair must converge — no residual integrity fault.
     assert h.detect(d) == [], "repair did not converge to baseline"
 
+
+def test_h7_scan_binaries_includes_exe():
+    """With scan_binaries=True, a binary (.exe) is baselined and protected."""
+    from healers.integrity_guard import make_baseline, IntegrityGuardHealer
+
+    d = tempfile.mkdtemp()
+    exe = os.path.join(d, "tool.exe")
+    with open(exe, "wb") as fh:
+        fh.write(b"MZ\x90\x00ORIGINAL")
+    make_baseline(d, scan_binaries=True, with_bytes=True)
+
+    # Tamper the binary on disk.
+    with open(exe, "wb") as fh:
+        fh.write(b"MZ\x90\x00TAMPERED")
+    h = IntegrityGuardHealer(scan_binaries=True)
+    faults = h.detect(d)
+    assert any(f.path == exe for f in faults), faults
+    res = h.repair([f for f in faults if f.path == exe][0])
+    assert res.changed is True
+    with open(exe, "rb") as fh:
+        assert fh.read() == b"MZ\x90\x00ORIGINAL"
+
+
+def test_h7_check_metadata_detects_and_repairs_permission():
+    """With check_metadata=True, a permission-mode change is detected+repaired."""
+    from healers.integrity_guard import make_baseline, IntegrityGuardHealer
+
+    d = tempfile.mkdtemp()
+    p = os.path.join(d, "app.py")
+    with open(p, "w", encoding="utf-8") as fh:
+        fh.write("x = 1\n")
+    make_baseline(d, check_metadata=True)
+
+    orig = os.lstat(p).st_mode & 0o777
+    new_mode = 0o444 if orig != 0o444 else 0o666
+    os.chmod(p, new_mode)
+    if (os.lstat(p).st_mode & 0o777) == orig:
+        # Platform does not honour chmod on this file — nothing to assert.
+        return
+    h = IntegrityGuardHealer(check_metadata=True)
+    faults = h.detect(d)
+    perm = [f for f in faults
+            if f.description.startswith("metadata deviation: permission")]
+    assert perm, faults
+    res = h.repair(perm[0])
+    assert res.changed is True
+    assert (os.lstat(p).st_mode & 0o777) == orig
+
+
+def test_h7_seal_covers_meta_tamper():
+    """Tampering __meta__ without updating __seal__ trips the trust-anchor fault."""
+    from healers.integrity_guard import make_baseline
+
+    d = tempfile.mkdtemp()
+    p = os.path.join(d, "app.py")
+    with open(p, "w", encoding="utf-8") as fh:
+        fh.write("x=1\n")
+    make_baseline(d, check_metadata=True, with_bytes=True)
+
+    bp = os.path.join(d, "baseline.json")
+    with open(bp, encoding="utf-8") as fh:
+        m = json.load(fh)
+    m["__meta__"]["app.py"]["mode"] = 0  # change meta, leave seal stale
+    with open(bp, "w", encoding="utf-8") as fh:
+        json.dump(m, fh)
+
+    from healers.integrity_guard import IntegrityGuardHealer
+    h = IntegrityGuardHealer(check_metadata=True)
+    faults = h.detect(d)
+    assert any("baseline.json seal mismatch" in f.description for f in faults), \
+        faults
+
+
+def test_watch_once_heals_deviation():
+    """The daemon's single-pass heal restores a tampered file to HEALED."""
+    import self_heal_watch
+    from healers.integrity_guard import make_baseline
+
+    d = tempfile.mkdtemp()
+    p = os.path.join(d, "app.py")
+    with open(p, "w", encoding="utf-8") as fh:
+        fh.write("x=1\n")
+    make_baseline(d, with_bytes=True)
+
+    with open(p, "a", encoding="utf-8") as fh:
+        fh.write("TAMPER\n")
+
+    res = self_heal_watch.heal_once(
+        d, strict=True, scan_binaries=False, check_metadata=False,
+        with_format=False, no_repair=False, verify_cmd=None)
+    assert res["status"] == "HEALED", res
+    healers = self_heal_watch._build_healers(True, False, False, False)
+    assert healers[0].name == "integrity_guard"
+

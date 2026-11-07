@@ -72,16 +72,20 @@ self_heal_kit/
 │   ├── yaml_format.py     # H3
 │   ├── quote_balance.py   # H4
 │   ├── key_map_gap.py     # H5
-│   └── decl_impl.py       # H6
+│   ├── decl_impl.py       # H6
+│   └── integrity_guard.py # H7 完整性守护（字节基线+封印+严格模式）
 ├── guards/
 │   ├── circuit_breaker.py # L4 熔断
 │   ├── snapshot_rollback.py # L3 快照回滚
 │   └── verify_gate.py     # L3 全绿闸门（+ test_command 钩子）
 ├── fixtures/              # 故意损坏样本（由 make_fixtures.py 生成）
 ├── make_fixtures.py       # 生成损坏样本
-├── make_baseline.py       # 生成 H7 可信基线（sha256 清单）
-├── self_test.py           # 自愈演示：场景 A 已自愈 / B 熔断 / C 钩子
-├── tests/                 # pytest 回归（25 条）
+├── make_baseline.py       # 生成 H7 可信基线（sha256 清单，支持 --with-bytes/--scan-binaries/--check-metadata）
+├── self_heal.py           # 自愈入口（--self 自举 / --target 外部）
+├── self_heal_watch.py     # 守护进程/监控（--once 单次 / --interval 轮询 / --no-repair 仅告警）
+├── self_heal_demo.py      # 三个演练：SELF-HEAL / H7 INTEGRITY / H7 VIRUS
+├── THREAT_MODEL.md        # 威胁模型（能力边界与安全假设）
+├── tests/                 # pytest 回归（29 条）
 ├── .gitignore
 └── .gitattributes         # 强制仓库 LF（避免 Windows 把源码 checkout 成 CRLF）
 ```
@@ -115,10 +119,30 @@ python3 self_test.py
 
 ### 3. 跑回归测试
 ```bash
-python3 -m pytest tests/ -q     # 期望：25 passed
+python3 -m pytest tests/ -q     # 期望：29 passed
 ```
 
-### 4. 当作库，对任意目录体检
+### 4. 守护进程 / 无人值守监控（阶段1 新增）
+
+`self_heal_watch.py` 是 `self_heal.py` 的"常驻版"：周期性对目标目录做完整性体检，发现偏离基线就自动修复。
+
+```bash
+# 对自身目录单次体检+修复（适合接 cron / 计划任务 / systemd timer）
+python3 self_heal_watch.py --self --once
+
+# 常驻轮询：每 300 秒体检一次，日志写入 watch.log
+python3 self_heal_watch.py --target /opt/myapp --interval 300 --log watch.log
+
+# 仅监控告警、不自动修复（先观察有无误报）
+python3 self_heal_watch.py --target /opt/myapp --no-repair
+
+# 更严：一并保护二进制、检查权限/符号链接
+python3 self_heal_watch.py --target /opt/myapp --scan-binaries --check-metadata
+```
+
+> 设计要点：守护进程**默认只用 H7 完整性守护**（不用 H1–H6 格式修复），避免把外部项目的"合法不同风格"误改。需信任目标项目时可加 `--with-format-healers`。修复后可用 `--verify-cmd` 指定验收命令（exit 0 == 已修复）。
+
+### 5. 当作库，对任意目录体检
 ```python
 from engine import SelfHealEngine
 
@@ -160,7 +184,9 @@ res = eng.run("/目标/目录")
   - **删除现有文件** → 从基线重建（自动创建父目录）
   - **新增恶意文件**（严格模式，默认开启）→ 检测并**隔离**到 `.quarantine/`（可逆，不硬删）
   - **基线自身被篡改**（哈希封印 `SEAL`）→ 报"信任锚被攻破"，并尽量从 git HEAD 恢复 `baseline.json`
-- **扩展保护范围**：H7 扫描的扩展名已从 10 种扩展到 18 种，新增脚本/配置类文件 `.sh .bat .cmd .ps1 .env .xml .html .css`（二进制依旧不扫）。
+- **扩展保护范围**：H7 扫描的扩展名已从 10 种扩展到 18 种，新增脚本/配置类文件 `.sh .bat .cmd .ps1 .env .xml .html .css`（二进制默认不扫，见下）。
+- **二进制完整性（可选 `--scan-binaries`）**：开启后 `.exe .dll .so .bin` 等二进制也会被纳入基线并受保护——可检测并字节级恢复被替换的二进制（默认关闭，避免清单膨胀）。
+- **元数据完整性（可选 `--check-metadata`）**：基线额外记录每个文件的**权限位（mode）**与**是否为符号链接**；运行时检测权限变更与"符号链接替换"，并自动还原权限（链接替换则重写原文件）。详见 `THREAT_MODEL.md`。
 - **严格模式默认开 + 白名单**：默认即检测"新增文件"，但内置白名单（`*.log`、`dist/`、`node_modules/`、`.venv/` 等已知安全产物）避免把正常新增文件当病毒误报；可用 `SelfHealEngine(integrity_strict=False)` 或 `self_heal.py --no-strict` 关闭。
 - **基线哈希封印（自保护）**：`make_baseline.py` 生成的 `baseline.json` 带 `__seal__` 哈希封印。若攻击者只改了目标文件又改了基线哈希来"藏"篡改，封印会失配并暴露篡改——这是防"基线被悄悄改写"的关键护栏（诚实边界见下）。
 - **生成可修复基线**：`python make_baseline.py <dir> --with-bytes` 会把每个文件的**原始字节**嵌入 `baseline.json`，非 git 目录也能字节级恢复（注意：带 `--with-bytes` 会嵌入文件内容，请勿对含密钥的目录使用该选项，或把 `baseline.json` 一并纳入版本控制/隔离存储）。
@@ -168,4 +194,4 @@ res = eng.run("/目标/目录")
   - 没有基线时 H7 静默（不误报）；H1–H6 只处理**格式 / 字符类**确定性故障。
   - 严格模式的"新增文件"检测依赖白名单质量，无法枚举所有合法新增文件；白名单之外的合法新增文件仍会被报（这是预期的安全偏向）。
   - **哈希封印不是根信任**：真正狡猾的攻击者若能同时改写目标文件、基线哈希和封印，仍可绕过——真正的根信任需要外部密钥/带外存储。封印防范的是"意外损坏"和"非专业篡改"。
-  - 范围外：`_TEXT_EXTS`/`_SKIP_DIRS` 之外的文件、运行时内存注入、文件权限/symlink 替换、引擎本体/解释器被替换导致 H7 不运行。本程序不修复业务逻辑错误、不证明算法正确性、不联网安装工具链、不是杀毒软件。
+  - 范围外：`_TEXT_EXTS`/`_SKIP_DIRS` 之外的文件（除非开 `--scan-binaries`）、运行时内存注入、**引擎本体/解释器被替换导致 H7 不运行**。文件权限/symlink 替换现已可由 `--check-metadata` 覆盖。本程序不修复业务逻辑错误、不证明算法正确性、不联网安装工具链、不是杀毒软件。
