@@ -884,3 +884,50 @@ def test_watch_trust_anchor_fail_closed(tmp_path=None):
     assert res["status"] == "TRUST_BROKEN", res
     assert "ANCHOR" in (res.get("reason") or "").upper()
 
+
+def test_repair_never_attaches_to_outer_baseline_across_git_boundary():
+    """Drill-copy regression: an inner git repo living under a directory that
+    has a decoy baseline.json must repair against ITS OWN git HEAD — walking
+    up past a git boundary into another project's baseline is a trust mixup
+    (this exact bug made the H7 INTEGRITY demo FAILED_CLOSED)."""
+    from healers.integrity_guard import IntegrityGuardHealer
+
+    d = tempfile.mkdtemp()
+    inner = os.path.join(d, "copy")
+    os.makedirs(inner)
+    _write_text(os.path.join(inner, "app.py"), "x = 1\n")
+    subprocess.run(["git", "init", "-q"], cwd=inner, check=True,
+                   capture_output=True)
+    subprocess.run(["git", "add", "-A"], cwd=inner, check=True,
+                   capture_output=True)
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                    "commit", "-qm", "base"], cwd=inner, check=True,
+                   capture_output=True)
+
+    # Decoy OUTER baseline.json claiming to govern "copy/app.py" (old code
+    # walked up from the file and found it first).
+    _write_text(os.path.join(d, "baseline.json"),
+                json.dumps({"copy/app.py": "0" * 64}) + "\n")
+
+    # Tamper the inner file; detect against the inner repo.
+    _write_text(os.path.join(inner, "app.py"), "x = 666  # trojan\n")
+    h = IntegrityGuardHealer()
+    faults = h.detect(inner)          # _last_target = inner
+    assert len(faults) == 1, [f.description for f in faults]
+    res = h.repair(faults[0])
+    assert res.changed, res.detail     # repaired from INNER git HEAD, not decoy
+    assert "x = 1" in open(os.path.join(inner, "app.py"),
+                           encoding="utf-8").read()
+    assert not h.detect(inner)
+
+    # Second pass with a FRESH healer and no detect(): _last_target is None,
+    # so this exercises _find_target_root's git-boundary stop directly.
+    _write_text(os.path.join(inner, "app.py"), "x = 999  # trojan again\n")
+    from healers.base import Fault as _Fault
+    h2 = IntegrityGuardHealer()
+    fake = _Fault("integrity_guard",
+                  os.path.join(inner, "app.py"),
+                  "integrity deviation: sha256 zzz != baseline yyy")
+    res2 = h2.repair(fake)
+    assert res2.changed, res2.detail
+

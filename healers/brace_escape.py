@@ -31,6 +31,9 @@ _SKIP_DIR_NAMES = {"tests", "fixtures", "docs", "work", "analysis", "__pycache__
 _SKIP_FILE_NAMES = {"README.md", "self_heal_demo.py", "self_test.py",
                     "make_fixtures.py", "run_integration_demo.py",
                     "sample_leak.py",
+                    # agent_guard.py 的 git 钩子模板用 f-string `{{`/`}}` 渲染
+                    # shell 代码块 `{ ... }`，是合法转义，非泄漏。
+                    "agent_guard.py",
                     # 自举排除：检测器自身源码必然含 "{{"/"}}" 字符串字面量
                     # （用于匹配），若不自排除会被自己误报并破坏检测逻辑。
                     "brace_escape.py"}

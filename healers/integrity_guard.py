@@ -517,7 +517,23 @@ class IntegrityGuardHealer(Healer):
 
     # -- repair -------------------------------------------------------------
     def repair(self, fault: Fault) -> RepairResult:
-        base_dir = self._find_target_root(fault.path)
+        # Preferred root: the directory the last detect() scanned. detect()
+        # resolved its baseline FROM that directory (its own baseline.json or
+        # ITS OWN git root via _git_root_exact), so repairing relative to the
+        # same root is consistent with what was compared. Without this, a
+        # drill copy whose baseline is its own git HEAD would walk up and
+        # find an OUTER baseline.json (different project!) and fail.
+        base_dir = None
+        last = getattr(self, "_last_target", None)
+        if last and os.path.isdir(last):
+            try:
+                rel_chk = os.path.relpath(fault.path, last)
+                if not rel_chk.startswith(".."):
+                    base_dir = last
+            except Exception:
+                pass
+        if base_dir is None:
+            base_dir = self._find_target_root(fault.path)
         if base_dir is None and self._baseline is not None:
             # Injected baseline (tests / library use): there is no
             # baseline.json on disk to locate, so fall back to the directory
@@ -637,12 +653,22 @@ class IntegrityGuardHealer(Healer):
         under ``work/`` has its own baseline.json and must NOT fall back to an
         outer repository). Only when no baseline.json exists do we fall back to
         a git worktree root (the ``--self`` case).
+
+        The upward walk STOPS at any nested git repository boundary: files
+        inside an inner repo are governed by that repo (its HEAD or its own
+        baseline.json), never by an outer project's baseline.json above it.
+        Without this, a git-baselined drill copy inside the kit's own tree
+        would attach to the kit's committed baseline.json — a different
+        project's trust data.
         """
         d = os.path.dirname(path)
         start = d
         while True:
             if os.path.isfile(os.path.join(d, "baseline.json")):
                 return d
+            if os.path.isdir(os.path.join(d, ".git")) or \
+               os.path.isfile(os.path.join(d, ".git")):
+                break  # inner git repo boundary — outer baselines don't govern
             parent = os.path.dirname(d)
             if parent == d:
                 break

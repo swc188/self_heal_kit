@@ -86,10 +86,10 @@ self_heal_kit/
 ├── self_heal.py           # 自愈入口（--self 自举 / --target 外部）
 ├── self_heal_watch.py     # 守护进程（--once / --interval / --no-repair / --agent-guard Agent 工作区）
 ├── agent_guard.py         # 前置闸门（check 写入授权/校验 · run 先校验再执行 · install-hook git 钩子）
-├── self_heal_demo.py      # 三个演练：SELF-HEAL / H7 INTEGRITY / H7 VIRUS
+├── self_heal_demo.py      # 四幕演练：SELF-HEAL / H7 INTEGRITY / H7 VIRUS / AGENT GUARD
 ├── verify_trust.py        # 带外信任根锚点 + 基线快照管理（seal / verify / list / promote）
 ├── THREAT_MODEL.md        # 威胁模型（能力边界与安全假设）
-├── tests/                 # pytest 回归（41 条）
+├── tests/                 # pytest 回归（42 条）
 ├── .gitignore
 └── .gitattributes         # 强制仓库 LF（避免 Windows 把源码 checkout 成 CRLF）
 ```
@@ -123,7 +123,7 @@ python3 self_test.py
 
 ### 3. 跑回归测试
 ```bash
-python3 -m pytest tests/ -q     # 期望：41 passed
+python3 -m pytest tests/ -q     # 期望：42 passed
 ```
 
 ### 4. 守护进程 / 无人值守监控（阶段1 新增）
