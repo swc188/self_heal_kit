@@ -77,15 +77,17 @@ self_heal_kit/
 ├── guards/
 │   ├── circuit_breaker.py # L4 熔断
 │   ├── snapshot_rollback.py # L3 快照回滚
-│   └── verify_gate.py     # L3 全绿闸门（+ test_command 钩子）
+│   ├── verify_gate.py     # L3 全绿闸门（+ test_command 钩子）
+│   └── write_guard.py     # 前置策略：写入授权 + 作用域字节校验（供 agent_guard 调用）
 ├── fixtures/              # 故意损坏样本（由 make_fixtures.py 生成）
 ├── make_fixtures.py       # 生成损坏样本
 ├── make_baseline.py       # 生成 H7 可信基线（sha256 清单，支持 --with-bytes/--scan-binaries/--check-metadata/--scope-root）
 ├── self_heal.py           # 自愈入口（--self 自举 / --target 外部）
 ├── self_heal_watch.py     # 守护进程（--once / --interval / --no-repair / --agent-guard Agent 工作区）
+├── agent_guard.py         # 前置闸门（check 写入授权/校验 · run 先校验再执行 · install-hook git 钩子）
 ├── self_heal_demo.py      # 三个演练：SELF-HEAL / H7 INTEGRITY / H7 VIRUS
 ├── THREAT_MODEL.md        # 威胁模型（能力边界与安全假设）
-├── tests/                 # pytest 回归（34 条）
+├── tests/                 # pytest 回归（38 条）
 ├── .gitignore
 └── .gitattributes         # 强制仓库 LF（避免 Windows 把源码 checkout 成 CRLF）
 ```
@@ -119,7 +121,7 @@ python3 self_test.py
 
 ### 3. 跑回归测试
 ```bash
-python3 -m pytest tests/ -q     # 期望：34 passed
+python3 -m pytest tests/ -q     # 期望：38 passed
 ```
 
 ### 4. 守护进程 / 无人值守监控（阶段1 新增）
@@ -148,7 +150,30 @@ python3 self_heal_watch.py --target /repo --agent-guard \
 >
 > **Agent 工作区守护（`--agent-guard`）**：给 AI Agent 用时，只守护它真正写入的目录（`--agent-root`，可重复），宿主项目其余部分完全不参与检测——这是把误报压到接近零的关键。配套基线要用同一套相对根：`python3 make_baseline.py /repo --with-bytes --scope-root .agent`（空基线会告警，避免"以为保护了其实什么都没纳入"）。**fail-safe 语义**：开了 `--agent-guard` 却没给任何 `--agent-root` 会直接报错退出，绝不退化成"静默守护整棵树"。
 
-### 5. 当作库，对任意目录体检
+### 5. 前置闸门 agent_guard（阶段2 新增：从"事后修复"到"事前拒绝"）
+守护进程是**事后**把偏离的字节修回来；`agent_guard.py` 把校验挪到动作**前面**——写入、提交、执行之前先问一句：
+
+```bash
+# 路径策略：这个文件允许写吗？（守护区外 / .. 逃逸 / 宿主项目 → DENY exit 1）
+python3 agent_guard.py check --target /repo --root .agent --file .agent/x.py
+
+# 字节策略：守护区与基线一致吗？（偏离 exit 1）
+python3 agent_guard.py check --target /repo --root .agent
+
+# 先校验再执行：守护区偏离基线时，命令根本不会被运行
+python3 agent_guard.py run --target /repo --root .agent -- pytest -q
+
+# 装 git pre-commit 钩子：偏离基线的提交直接被拒（幂等；
+# 非本工具安装的钩子拒绝覆盖/删除，exit 4）
+python3 agent_guard.py install-hook --target /repo --root .agent
+python3 agent_guard.py uninstall-hook --target /repo
+```
+
+退出码：`0` 允许/干净 · `1` 阻断/偏离 · `2` 用法或环境错误 · `4` 拒绝（钩子非本工具所有）。
+
+> **诚实边界**：这是**协作式闸门**——管得住调用它的工作流（Agent shell 包装、`git commit`、CI），管不住完全不问它的进程（那需要内核/EDR 级拦截，见 `THREAT_MODEL.md`）。
+
+### 6. 当作库，对任意目录体检
 ```python
 from engine import SelfHealEngine
 
@@ -159,7 +184,7 @@ print(res["log"])      # 逐轮 detect→repair→verify 日志
 ```
 默认内置 6 个 healer，自动跑闭环 + 4 道护栏。
 
-### 5. 接入真实测试套件（按需开启，默认关闭）
+### 7. 接入真实测试套件（按需开启，默认关闭）
 ```python
 from engine import SelfHealEngine
 from guards.verify_gate import VerifyGate
@@ -170,7 +195,7 @@ res = eng.run("/目标/目录")
 ```
 不传 `test_command` 即**自包含模式**（无 healer 故障即绿）。
 
-### 6. 扩展：写自己的 healer
+### 8. 扩展：写自己的 healer
 继承 `healers/base.py` 的 `Healer`，实现三个方法：
 - `detect(target) -> list[Fault]`：扫描并返回故障
 - `repair(fault) -> RepairResult`：执行修复（`changed=True/False`）

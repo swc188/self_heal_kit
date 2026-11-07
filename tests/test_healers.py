@@ -670,3 +670,121 @@ def test_scope_roots_baseline_only_includes_scope():
     tracked = {k for k in manifest if not k.startswith("__")}
     assert tracked == {".agent/gen.py"}, tracked
 
+
+# ---------------------------------------------------------------------------
+# Phase 2 step 2 — write_guard / agent_guard (pre-flight gate)
+# ---------------------------------------------------------------------------
+
+def _make_guarded_ws():
+    """Temp workspace: git repo + .agent baseline + a host file outside scope."""
+    import subprocess
+    d = tempfile.mkdtemp()
+    os.makedirs(os.path.join(d, ".agent"), exist_ok=True)
+    _write_text(os.path.join(d, ".agent", "gen.py"), "print('v1')\n")
+    _write_text(os.path.join(d, "host.py"), "x = 1\n")
+    subprocess.run(["git", "init", "-q"], cwd=d, check=True,
+                   capture_output=True)
+    from healers.integrity_guard import make_baseline
+    make_baseline(d, scope_roots=[".agent"])
+    return d
+
+
+def test_write_guard_path_policy():
+    """authorize_write: in-root ALLOW; host / .. escape / no-roots DENY."""
+    from guards.write_guard import authorize_write
+
+    d = tempfile.mkdtemp()
+    ok, _ = authorize_write(os.path.join(d, ".agent", "x.py"), d, [".agent"])
+    assert ok
+
+    ok, why = authorize_write(os.path.join(d, "host.py"), d, [".agent"])
+    assert not ok and "escapes" in why
+
+    ok, _ = authorize_write(os.path.join(d, ".agent", "..", "host.py"),
+                            d, [".agent"])
+    assert not ok
+
+    ok, _ = authorize_write(os.path.join(d, ".agent", "x.py"), d, [])
+    assert not ok  # fail-safe: no roots => nothing allowed
+
+
+def test_verify_scope_detects_deviation_in_scope_only():
+    """Tampering inside the root is flagged; host files are ignored."""
+    from guards.write_guard import verify_scope
+
+    d = _make_guarded_ws()
+    assert verify_scope(d, [".agent"]) == []
+
+    # Host file outside the guarded root: changing it is not our business.
+    _write_text(os.path.join(d, "host.py"), "x = 999  # rogue\n")
+    assert verify_scope(d, [".agent"]) == []
+
+    # Inside the root: must be flagged.
+    _write_text(os.path.join(d, ".agent", "gen.py"), "import evil\n")
+    faults = verify_scope(d, [".agent"])
+    assert any("gen.py" in f.path for f in faults), [f.path for f in faults]
+
+
+def test_agent_guard_run_refuses_on_deviation(tmp_path=None):
+    """run executes when clean; a deviating workspace is never executed."""
+    d = _make_guarded_ws()
+    script = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "agent_guard.py")
+    marker = os.path.join(d, "did_run.txt")
+
+    # Clean workspace -> command executes.
+    r = subprocess.run(
+        [sys.executable, script, "run", "--target", d, "--root", ".agent",
+         "--quiet", "--", sys.executable, "-c",
+         f"open(r'{marker}','w').write('ran')"],
+        capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert os.path.isfile(marker)
+
+    # Tamper inside the root -> refuse to execute.
+    os.remove(marker)
+    _write_text(os.path.join(d, ".agent", "gen.py"), "import evil\n")
+    r = subprocess.run(
+        [sys.executable, script, "run", "--target", d, "--root", ".agent",
+         "--quiet", "--", sys.executable, "-c",
+         f"open(r'{marker}','w').write('ran')"],
+        capture_output=True, text=True, timeout=60)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert not os.path.isfile(marker)  # never executed
+
+
+def test_agent_guard_hook_install_idempotent_and_protected():
+    """install-hook idempotent; foreign hook refused (exit 4) both ways."""
+    import agent_guard
+
+    d = _make_guarded_ws()
+
+    class A:
+        pass
+
+    a = A()
+    a.target, a.roots, a.force = d, [".agent"], False
+
+    assert agent_guard._do_install_hook(a) == 0
+    hook = os.path.join(d, ".git", "hooks", "pre-commit")
+    assert os.path.isfile(hook)
+
+    # Idempotent: re-install over our own hook is fine.
+    assert agent_guard._do_install_hook(a) == 0
+
+    # Foreign hook: refuse both to install and to uninstall.
+    with open(hook, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("#!/bin/sh\n# someone else's hook\n")
+    assert agent_guard._do_install_hook(a) == 4
+
+    u = A()
+    u.target = d
+    assert agent_guard._do_uninstall_hook(u) == 4
+
+    # Ours again (after the foreign file is cleared): uninstall succeeds,
+    # then nothing-to-do is OK.
+    os.remove(hook)
+    assert agent_guard._do_install_hook(a) == 0
+    assert agent_guard._do_uninstall_hook(u) == 0
+    assert agent_guard._do_uninstall_hook(u) == 0
+
