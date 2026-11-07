@@ -24,17 +24,31 @@ def _build_engine(test_command=None):
 
 
 def self_heal(target, run_tests=True, test_command=None,
-              integrity_strict=True):
+              integrity_strict=True, h7_only=False):
     from engine import SelfHealEngine
+    from healers.integrity_guard import (
+        IntegrityGuardHealer, DEFAULT_NEW_FILE_WHITELIST)
 
     if test_command is None and run_tests:
-        # 用本程序自己的 pytest 作为验收（修完必须 14 全绿）。
+        # 用本程序自己的 pytest 作为验收（修完必须全绿）。
         # 限定 tests/ 目录：根目录下 work/ 中的演练副本包含同名测试模块，
         # 若对整个根目录跑 pytest 会触发 import 冲突（exit 2），
         # 那不属于可自愈的格式故障，因此只收集主测试套件。
         test_command = [sys.executable, "-m", "pytest", "-q", "tests/"]
+
+    # h7_only (default for --self): the kit's own source is "correct by
+    # definition" (it is what HEAD committed), so healing itself must mean
+    # *restoring* it to that trusted state — not reformatting it with H1-H6
+    # (which would rewrite valid code and make --self non-idempotent).
+    healers = None
+    if h7_only:
+        healers = [IntegrityGuardHealer(
+            detect_new_files=integrity_strict,
+            new_file_whitelist=DEFAULT_NEW_FILE_WHITELIST)]
+
     eng = SelfHealEngine(test_command=test_command,
-                         integrity_strict=integrity_strict)
+                         integrity_strict=integrity_strict,
+                         healers=healers)
     res = eng.run(target)
     return res
 
@@ -47,6 +61,8 @@ def main(argv=None):
     parser.add_argument("--test-command", default=None, help="自定义验收命令")
     parser.add_argument("--no-strict", action="store_true",
                         help="关闭严格模式（不检测'新增文件'，仅检测篡改/删除）")
+    parser.add_argument("--with-format-healers", action="store_true",
+                        help="除 H7 外也运行 H1-H6 格式修复（--self 默认仅 H7）")
     args = parser.parse_args(argv)
 
     if args.self:
@@ -67,7 +83,8 @@ def main(argv=None):
 
     res = self_heal(target, run_tests=not args.no_test,
                     test_command=args.test_command,
-                    integrity_strict=not args.no_strict)
+                    integrity_strict=not args.no_strict,
+                    h7_only=(args.self and not args.with_format_healers))
     print(f"\nRESULT: {res['status']}")
     if res["status"] == "HEALED":
         print(f"  rounds: {res['rounds']}")

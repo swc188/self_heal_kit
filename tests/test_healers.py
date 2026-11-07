@@ -523,3 +523,41 @@ def test_watch_once_heals_deviation():
     healers = self_heal_watch._build_healers(True, False, False, False)
     assert healers[0].name == "integrity_guard"
 
+
+def test_whitelist_matches_nested_dir_any_depth():
+    """Regression: a directory whitelist pattern must match at any nesting level.
+
+    Previously ``.pytest_cache/`` only matched at the top level, so
+    ``tests/.pytest_cache/*`` was misjudged as an unexpected new file,
+    quarantined, and made ``--self`` non-idempotent.
+    """
+    from healers.integrity_guard import (
+        IntegrityGuardHealer, make_baseline, DEFAULT_NEW_FILE_WHITELIST,
+    )
+
+    d = tempfile.mkdtemp()
+    p = os.path.join(d, "app.py")
+    with open(p, "w", encoding="utf-8") as fh:
+        fh.write("x=1\n")
+    make_baseline(d, with_bytes=True)
+
+    nested = os.path.join(d, "tests", ".pytest_cache")
+    os.makedirs(nested, exist_ok=True)
+    with open(os.path.join(nested, "CACHEDIR.TAG"), "w", encoding="utf-8") as fh:
+        fh.write("Signature: 8a477f597d28d172789f06886806bc55\n")
+
+    h = IntegrityGuardHealer(detect_new_files=True,
+                             new_file_whitelist=DEFAULT_NEW_FILE_WHITELIST)
+    faults = h.detect(d)
+    assert not any(".pytest_cache" in f.path for f in faults), \
+        [f.path for f in faults]
+
+    # An unrelated nested file must still be flagged (whitelist is not a no-op).
+    os.makedirs(os.path.join(d, "pkg"), exist_ok=True)
+    rogue = os.path.join(d, "pkg", "rogue.py")
+    with open(rogue, "w", encoding="utf-8") as fh:
+        fh.write("evil\n")
+    faults = h.detect(d)
+    assert any(f.path.endswith("rogue.py") for f in faults), \
+        [f.path for f in faults]
+

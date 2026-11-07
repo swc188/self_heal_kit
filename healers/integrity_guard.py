@@ -90,11 +90,14 @@ def _sha256_file(path: str) -> str:
 def _git_root(path: str) -> str | None:
     """Return the git worktree root containing ``path``, or None."""
     try:
+        # Decode as UTF-8 explicitly: on Windows ``text=True`` would use the
+        # locale codepage (e.g. GBK) and mangle non-ASCII repo paths.
         r = subprocess.run(
             ["git", "-C", path, "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=30)
+            capture_output=True, timeout=30)
         if r.returncode == 0:
-            return r.stdout.strip()
+            root = r.stdout.decode("utf-8", "replace").strip()
+            return root or None
     except Exception:
         pass
     return None
@@ -241,9 +244,18 @@ def _decode_bytes(raw) -> bytes | None:
 
 
 def _is_whitelisted(rel: str, whitelist) -> bool:
+    # Normalise Windows separators to "/".
+    rel = rel.replace("\\", "/")
+    parts = rel.split("/")
     for pat in whitelist:
         if pat.endswith("/"):
-            if rel == pat[:-1] or rel.startswith(pat):
+            # Directory pattern: match the named directory at ANY nesting
+            # level (e.g. ".pytest_cache/" must cover both ".pytest_cache/..."
+            # and "tests/.pytest_cache/..."). A component match is enough
+            # because any file under that directory carries the component in
+            # its relpath.
+            stem = pat[:-1]
+            if stem in parts:
                 return True
         elif pat.startswith("*."):
             if rel.endswith(pat[1:]):
@@ -294,21 +306,27 @@ class IntegrityGuardHealer(Healer):
         """Build {relpath: sha256} from `git ls-tree -r HEAD`.
 
         Only used when target_dir IS the git worktree root (not a subdir).
+        Uses ``core.quotepath=false`` + UTF-8 decoding so non-ASCII
+        filenames (e.g. Chinese-named reports) are captured instead of being
+        silently escaped (``\\345...``) and dropped by the ``.endswith`` check.
         """
         repo = _git_root_exact(target_dir)
         if repo is None:
             return None
         try:
             r = subprocess.run(
-                ["git", "-C", repo, "ls-tree", "-r", "--name-only", "HEAD"],
-                capture_output=True, text=True, timeout=30)
+                ["git", "-c", "core.quotepath=false", "-C", repo,
+                 "ls-tree", "-r", "--name-only", "HEAD"],
+                capture_output=True, timeout=30)
             if r.returncode != 0:
                 return None
         except Exception:
             return None
+        text = r.stdout.decode("utf-8", "replace")
         manifest = {}
-        for rel in r.stdout.splitlines():
-            if not rel.endswith(_TEXT_EXTS):
+        for rel in text.splitlines():
+            rel = rel.strip()
+            if not rel or not rel.endswith(_TEXT_EXTS):
                 continue
             blob = _git_show_blob(repo, rel)
             if blob is None:
