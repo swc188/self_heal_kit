@@ -22,6 +22,11 @@ Design choices (and why):
     under the given ``--agent-root`` (relative to the target, repeatable) are
     checked and restored. Everything else in the host project stays out of
     scope, which is what keeps false positives near zero inside a big repo.
+  * ``--trust-anchor FILE`` verifies ``baseline.json`` against an out-of-band
+    trust anchor (sha256 recorded elsewhere by ``verify_trust.py seal``) at the
+    start of every pass. A broken anchor means the trust root itself was
+    rewritten — the daemon then refuses to repair anything (restoring from a
+    suspect baseline is worse than not restoring) and exits/alerts TRUST_BROKEN.
   * ``--verify-cmd`` optionally runs a test command after repair as the final
     "healed" proof (same contract as the engine: exit 0 == healed).
 
@@ -31,6 +36,7 @@ Usage:
     python self_heal_watch.py --target /opt/myapp --no-repair   # alert only
     python self_heal_watch.py --target /repo --agent-guard \
         --agent-root .agent --agent-root generated --once
+    python self_heal_watch.py --target /repo --trust-anchor /mnt/ro/repo.anchor.json
 """
 
 from __future__ import annotations
@@ -80,8 +86,19 @@ def _build_healers(strict: bool, scan_binaries: bool, check_metadata: bool,
 def heal_once(target: str, strict: bool, scan_binaries: bool,
               check_metadata: bool, with_format: bool, no_repair: bool,
               verify_cmd, agent_guard: bool = False,
-              agent_roots=None) -> dict:
+              agent_roots=None, trust_anchor: str | None = None) -> dict:
     from engine import SelfHealEngine
+
+    # Trust-root pre-check: a baseline that no longer matches its out-of-band
+    # anchor is untrusted — repairing from it could bake the attacker's bytes
+    # in permanently. Fail closed before touching anything.
+    if trust_anchor:
+        from guards.trust_root import verify_file
+        ok, detail = verify_file(os.path.join(target, "baseline.json"),
+                                 trust_anchor)
+        if not ok:
+            return {"status": "TRUST_BROKEN", "faults": [], "rounds": 0,
+                    "reason": detail}
 
     healers = _build_healers(strict, scan_binaries, check_metadata, with_format,
                              agent_guard, agent_roots)
@@ -121,14 +138,16 @@ def run_loop(target, args):
          f"strict={args.strict} scan_binaries={args.scan_binaries} "
          f"check_metadata={args.check_metadata} "
          f"with_format={args.with_format} no_repair={args.no_repair} "
-         f"agent_guard={args.agent_guard} agent_roots={args.agent_roots}")
+         f"agent_guard={args.agent_guard} agent_roots={args.agent_roots} "
+         f"trust_anchor={args.trust_anchor}")
 
     while not stop:
         try:
             res = heal_once(target, args.strict, args.scan_binaries,
                             args.check_metadata, args.with_format,
                             args.no_repair, args.verify_cmd,
-                            args.agent_guard, args.agent_roots)
+                            args.agent_guard, args.agent_roots,
+                            args.trust_anchor)
         except KeyboardInterrupt:
             emit("WATCH STOP (keyboard interrupt)")
             break
@@ -137,7 +156,10 @@ def run_loop(target, args):
             time.sleep(args.interval)
             continue
 
-        if res["status"] in ("CLEAN",):
+        if res["status"] == "TRUST_BROKEN":
+            emit(f"TRUST_BROKEN — {res.get('reason')} "
+                 f"(refusing to repair from a suspect baseline)")
+        elif res["status"] in ("CLEAN",):
             emit("CLEAN — no deviation")
         elif res["status"] == "ALERT":
             emit(f"ALERT — {len(res['faults'])} deviation(s):\n"
@@ -180,6 +202,9 @@ def main(argv=None):
                         help="要守护的相对根目录（可重复，如 .agent / generated）")
     parser.add_argument("--verify-cmd", default=None,
                         help="修复后运行的验收命令（exit 0 == 已修复）")
+    parser.add_argument("--trust-anchor", default=None, metavar="FILE",
+                        help="带外信任根锚点（verify_trust.py seal 生成）；"
+                             "锚点失配时拒绝修复（fail-closed）")
     parser.add_argument("--log", default=None, help="日志文件路径")
     args = parser.parse_args(argv)
 
@@ -204,6 +229,11 @@ def main(argv=None):
         return 2
 
     strict = not args.no_strict
+    # run_loop reads normalised names off the namespace (pre-existing bug:
+    # argparse flags are --no-strict/--with-format-healers, run_loop used
+    # args.strict/args.with_format and crashed on first loop iteration).
+    args.strict = strict
+    args.with_format = args.with_format_healers
 
     if args.once:
         res = heal_once(target, strict, args.scan_binaries,

@@ -788,3 +788,99 @@ def test_agent_guard_hook_install_idempotent_and_protected():
     assert agent_guard._do_uninstall_hook(u) == 0
     assert agent_guard._do_uninstall_hook(u) == 0
 
+
+# ---------------------------------------------------------------------------
+# Phase 2 step 3 — trust root: out-of-band anchor + snapshots
+# ---------------------------------------------------------------------------
+
+def test_trust_anchor_seal_and_break():
+    """seal records baseline hash; editing baseline breaks verify; restore fixes."""
+    from guards.trust_root import seal_file, verify_file
+
+    d = tempfile.mkdtemp()
+    baseline = os.path.join(d, "baseline.json")
+    _write_text(baseline, '{"a.py": "deadbeef", "__seal__": "x"}\n')
+    anchor = os.path.join(d, "outside", "repo.anchor.json")
+
+    seal_file(baseline, anchor)
+    ok, _ = verify_file(baseline, anchor)
+    assert ok
+
+    _write_text(baseline, '{"a.py": "evilhash", "__seal__": "x"}\n')
+    ok, detail = verify_file(baseline, anchor)
+    assert not ok and "TRUST ANCHOR BROKEN" in detail
+
+    _write_text(baseline, '{"a.py": "deadbeef", "__seal__": "x"}\n')
+    ok, _ = verify_file(baseline, anchor)
+    assert ok  # restore -> trust restored
+
+
+def test_snapshot_promote_roundtrip():
+    """--snapshot stores versioned baselines; promote rolls the anchor back."""
+    import subprocess
+
+    d = _make_guarded_ws()
+    script = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "make_baseline.py")
+
+    # v1 snapshot of the current clean state.
+    r = subprocess.run([sys.executable, script, d, "--snapshot", "v1"],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stdout + r.stderr
+    v1 = os.path.join(d, "baselines", "v1.json")
+    assert os.path.isfile(v1)
+
+    # Evolve the workspace and snapshot v2.
+    _write_text(os.path.join(d, ".agent", "gen.py"), "print('v2')\n")
+    r = subprocess.run([sys.executable, script, d, "--snapshot", "v2"],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    # Promote v1 back as the live baseline.
+    import verify_trust
+    class A:
+        pass
+    a = A()
+    a.target, a.name, a.anchor = d, "v1", None
+    assert verify_trust._do_promote(a) == 0
+    with open(os.path.join(d, "baseline.json"), encoding="utf-8") as fh:
+        promoted = fh.read()
+    with open(v1, encoding="utf-8") as fh:
+        assert promoted == fh.read()
+    assert verify_trust.list_snapshots(d) == ["v1", "v2"]
+
+    # Invalid snapshot names rejected.
+    import pytest as _pt
+    with _pt.raises(ValueError):
+        verify_trust.snapshot_path(d, "../evil")
+
+
+def test_watch_trust_anchor_fail_closed(tmp_path=None):
+    """--trust-anchor broken -> TRUST_BROKEN, no repair attempted, exit 1."""
+    from guards.trust_root import seal_file
+    import self_heal_watch
+
+    d = _make_guarded_ws()
+    anchor = os.path.join(d, "outside", "a.json")
+    seal_file(os.path.join(d, "baseline.json"), anchor)
+
+    # Clean + intact anchor -> normal pass.
+    res = self_heal_watch.heal_once(
+        d, True, False, False, False, False, None, trust_anchor=anchor)
+    assert res["status"] in ("CLEAN", "HEALED"), res
+
+    # Attacker edits the baseline (recomputing the inner seal, which is
+    # trivial) — the out-of-band anchor still catches it.
+    bp = os.path.join(d, "baseline.json")
+    data = json.loads(open(bp, encoding="utf-8").read())
+    data[".agent/gen.py"] = hashlib.sha256(b"print('trojan')\n").hexdigest()
+    from healers.integrity_guard import _seal_manifest
+    data["__seal__"] = _seal_manifest(data)   # re-sealed: inner seal defeated
+    with open(bp, "w", encoding="utf-8", newline="\n") as fh:
+        json.dump(data, fh)
+
+    res = self_heal_watch.heal_once(
+        d, True, False, False, False, False, None, trust_anchor=anchor)
+    assert res["status"] == "TRUST_BROKEN", res
+    assert "ANCHOR" in (res.get("reason") or "").upper()
+

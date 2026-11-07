@@ -78,7 +78,8 @@ self_heal_kit/
 │   ├── circuit_breaker.py # L4 熔断
 │   ├── snapshot_rollback.py # L3 快照回滚
 │   ├── verify_gate.py     # L3 全绿闸门（+ test_command 钩子）
-│   └── write_guard.py     # 前置策略：写入授权 + 作用域字节校验（供 agent_guard 调用）
+│   ├── write_guard.py     # 前置策略：写入授权 + 作用域字节校验（供 agent_guard 调用）
+│   └── trust_root.py      # 带外信任根锚点 + 基线快照（seal/verify/promote 底层）
 ├── fixtures/              # 故意损坏样本（由 make_fixtures.py 生成）
 ├── make_fixtures.py       # 生成损坏样本
 ├── make_baseline.py       # 生成 H7 可信基线（sha256 清单，支持 --with-bytes/--scan-binaries/--check-metadata/--scope-root）
@@ -86,8 +87,9 @@ self_heal_kit/
 ├── self_heal_watch.py     # 守护进程（--once / --interval / --no-repair / --agent-guard Agent 工作区）
 ├── agent_guard.py         # 前置闸门（check 写入授权/校验 · run 先校验再执行 · install-hook git 钩子）
 ├── self_heal_demo.py      # 三个演练：SELF-HEAL / H7 INTEGRITY / H7 VIRUS
+├── verify_trust.py        # 带外信任根锚点 + 基线快照管理（seal / verify / list / promote）
 ├── THREAT_MODEL.md        # 威胁模型（能力边界与安全假设）
-├── tests/                 # pytest 回归（38 条）
+├── tests/                 # pytest 回归（41 条）
 ├── .gitignore
 └── .gitattributes         # 强制仓库 LF（避免 Windows 把源码 checkout 成 CRLF）
 ```
@@ -121,7 +123,7 @@ python3 self_test.py
 
 ### 3. 跑回归测试
 ```bash
-python3 -m pytest tests/ -q     # 期望：38 passed
+python3 -m pytest tests/ -q     # 期望：41 passed
 ```
 
 ### 4. 守护进程 / 无人值守监控（阶段1 新增）
@@ -173,7 +175,32 @@ python3 agent_guard.py uninstall-hook --target /repo
 
 > **诚实边界**：这是**协作式闸门**——管得住调用它的工作流（Agent shell 包装、`git commit`、CI），管不住完全不问它的进程（那需要内核/EDR 级拦截，见 `THREAT_MODEL.md`）。
 
-### 6. 当作库，对任意目录体检
+### 6. 带外信任根 + 基线快照（阶段2 第3项：解决"基线本身被改"）
+`baseline.json` 自带的 `__seal__` 是**内部**封印——攻击者改了基线后重算封印即可骗过它（同一块盘、同一算法）。信任链的最后一环需要攻击者必须**同时碰第二处**：
+
+```bash
+# 生成基线时顺便把 sha256(baseline) 记到带外锚点（只读挂载 / 远端 / 备份）
+python3 make_baseline.py /repo --with-bytes --seal-to /mnt/ro/repo.anchor.json
+
+# 随时校验：磁盘上的 baseline 还是锚点记录的那个吗？
+python3 verify_trust.py verify --target /repo --anchor /mnt/ro/repo.anchor.json
+
+# 多版本快照：历史信任锚不被覆盖，可回滚
+python3 make_baseline.py /repo --snapshot v1
+python3 make_baseline.py /repo --snapshot v2
+python3 verify_trust.py list --target /repo        # -> v1 v2
+python3 verify_trust.py promote --target /repo --name v1   # 回滚为当前基线
+python3 verify_trust.py promote --target /repo --name v1 --anchor /mnt/ro/repo.anchor.json  # 回滚+重封印
+
+# 守护进程挂上信任根：每轮开工先验锚，失配则拒绝修复（fail-closed）
+python3 self_heal_watch.py --target /repo --trust-anchor /mnt/ro/repo.anchor.json --once
+```
+
+> **为什么锚点比内部封印强**：内部封印失配只需要攻击者改两处（文件+基线重算）；带外锚点要求攻击者在**另一个独立可写位置**再改一次。只改磁盘基线（哪怕把内部封印也重算对）→ `verify` 照样报 `TRUST ANCHOR BROKEN`，守护进程报 `TRUST_BROKEN` 并**拒绝从可疑基线修复**（用被污染的基线自愈 = 把后门固化）。
+>
+> **诚实边界**：这是**哈希级、非密钥级**信任根。若攻击者对锚点位置也可写，链条照样能被重封——防护强度取决于你把锚点放得多难碰（只读挂载、异地备份、另一台机器）。真正的密钥级信任根（签名验证）需要引入密钥体系，属运维决策，不在此吹。
+
+### 7. 当作库，对任意目录体检
 ```python
 from engine import SelfHealEngine
 
@@ -184,7 +211,7 @@ print(res["log"])      # 逐轮 detect→repair→verify 日志
 ```
 默认内置 6 个 healer，自动跑闭环 + 4 道护栏。
 
-### 7. 接入真实测试套件（按需开启，默认关闭）
+### 8. 接入真实测试套件（按需开启，默认关闭）
 ```python
 from engine import SelfHealEngine
 from guards.verify_gate import VerifyGate
@@ -195,7 +222,7 @@ res = eng.run("/目标/目录")
 ```
 不传 `test_command` 即**自包含模式**（无 healer 故障即绿）。
 
-### 8. 扩展：写自己的 healer
+### 9. 扩展：写自己的 healer
 继承 `healers/base.py` 的 `Healer`，实现三个方法：
 - `detect(target) -> list[Fault]`：扫描并返回故障
 - `repair(fault) -> RepairResult`：执行修复（`changed=True/False`）

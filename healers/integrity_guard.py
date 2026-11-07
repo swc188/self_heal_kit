@@ -72,7 +72,7 @@ DEFAULT_NEW_FILE_WHITELIST = {
     "*.log", "*.tmp", "*.bak", "*.swp", "*.orig", "*.pyc", "*.pyo",
     ".venv/", "venv/", "env/", "node_modules/",
     "dist/", "build/", "__pycache__/", ".pytest_cache/", ".mypy_cache/",
-    ".tox/", ".git/", "work/", ".quarantine/", ".workbuddy/",
+    ".tox/", ".git/", "work/", ".quarantine/", ".workbuddy/", "baselines/",
     "fixtures/", "demo_project/", "analysis/", "docs/",
     "examples/", "testdata/", "sample_data/",
 }

@@ -48,7 +48,7 @@ _SKIP_DIRS = {
     "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox",
     "node_modules",
     ".loop_snapshots", ".loop_state", ".loop_circuit_state",
-    ".upgrade_backup", ".workbuddy", ".quarantine",
+    ".upgrade_backup", ".workbuddy", ".quarantine", "baselines",
     # 演示/样本/文档目录：其中的故意损坏样本、演练副本、文档示例属于
     # 教学素材，不是真实故障，绝不能修复（修复会破坏演示语义）。
     "fixtures", "work", "demo_project", "analysis", "docs", "examples",
