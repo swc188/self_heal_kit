@@ -1,0 +1,32 @@
+self_heal_kit
+Copyright (C) 2026 self_heal_kit Authors
+
+This product is distributed under a DUAL LICENSE. The authoritative notice
+is in the file LICENSE; this NOTICE is a summary for attribution purposes.
+
+  SPDX-License-Identifier: GPL-3.0-or-later OR LicenseRef-Commercial
+
+  Option A (default, free): GNU General Public License v3.0 or later
+      full verbatim text: LICENSE-GPL-3.0.txt
+  Option B (by written agreement only): Commercial License
+      explanation and request process: LICENSE-COMMERCIAL.md
+
+PROVENANCE
+  - All source code and documentation in this project are original work of
+    the project authors and its contributors. No third-party source code is
+    vendored; the only runtime dependency is the Python standard library.
+  - Contributions are accepted under CLA.md, which grants the copyright
+    holder sublicensing rights so that the project can be offered under
+    both GPLv3+ and proprietary/commercial terms.
+  - The GNU General Public License v3 text is Copyright (C) 2007 Free
+    Software Foundation, Inc. and is reproduced verbatim in
+    LICENSE-GPL-3.0.txt. The FSF is not affiliated with, and does not
+    endorse, this project.
+
+RELEASE HISTORY (licensing)
+  - 1.0.0 is the FIRST public release and is dual-licensed.
+  - No earlier version was ever publicly distributed. An unreleased MIT
+    draft of LICENSE existed locally before the first upload and was
+    replaced; no third party obtained rights under it.
+
+For licensing questions, contact the GitHub repository owner.

@@ -1,0 +1,69 @@
+self_heal_kit — DUAL LICENSE NOTICE
+
+SPDX-License-Identifier: GPL-3.0-or-later OR LicenseRef-Commercial
+Copyright (C) 2026 self_heal_kit Authors
+
+This software ("self_heal_kit") is made available under a DUAL LICENSE.
+You must choose ONE of the two options below. No other rights are granted.
+
+------------------------------------------------------------------------
+OPTION A — GNU GENERAL PUBLIC LICENSE, VERSION 3 OR LATER (community)
+------------------------------------------------------------------------
+You may use, copy, modify and distribute this software under the terms of
+the GNU General Public License as published by the Free Software Foundation,
+either version 3 of the License, or (at your option) any later version.
+
+The complete, verbatim license text is in LICENSE-GPL-3.0.txt.
+
+This option is free of charge and is the DEFAULT. If you have not signed a
+written commercial license agreement with the copyright holder, Option A
+applies to you.
+
+------------------------------------------------------------------------
+OPTION B — COMMERCIAL LICENSE (proprietary / OEM / closed-source use)
+------------------------------------------------------------------------
+If you cannot or do not wish to comply with the GPLv3 obligations (for
+example, embedding this software in a proprietary product that you convey
+to third parties without offering the Corresponding Source under GPLv3),
+you may obtain a commercial license from the copyright holder under a
+separate WRITTEN AGREEMENT.
+
+See LICENSE-COMMERCIAL.md for what a commercial license typically covers
+and how to request one.
+
+IMPORTANT: This file does NOT itself grant a commercial license. A
+commercial license exists only once a written agreement signed by the
+copyright holder is in place. Until then, Option A governs your use.
+
+------------------------------------------------------------------------
+SCOPE, PROVENANCE AND CONTRIBUTIONS
+------------------------------------------------------------------------
+Unless a file explicitly states otherwise, every source and documentation
+file in this distribution is governed by the dual license above. See NOTICE
+for attribution. Contributions are accepted under CLA.md, which grants the
+copyright holder the sublicensing rights that make dual licensing possible.
+
+This project has NEVER been publicly distributed under the MIT License or
+any other permissive license. An earlier MIT draft of LICENSE was replaced
+before the first public upload; no third party ever received, relied on, or
+obtained rights under that draft. The first public release is dual-licensed.
+
+No third-party source code is vendored; the only runtime dependency is the
+Python standard library. The GNU GPL v3 text is reproduced verbatim from
+the Free Software Foundation in LICENSE-GPL-3.0.txt.
+
+------------------------------------------------------------------------
+NO WARRANTY
+------------------------------------------------------------------------
+Except as expressly provided by the license that applies to you, this
+software is distributed "AS IS", WITHOUT WARRANTY OF ANY KIND, express or
+implied. See the applicable license for the full warranty disclaimer and
+limitation of liability.
+
+------------------------------------------------------------------------
+中文要点
+------------------------------------------------------------------------
+本软件采用「GPLv3 及以后版本（社区版）／商业许可」双许可，二选一。
+未签署书面商业协议即自动适用 GPLv3+；闭源分发、OEM、需要担保或 SLA
+等场景，请联系版权持有人取得商业许可。本文件不构成商业授权，也不承诺
+任何价格或条款。详见 LICENSE-COMMERCIAL.md 与 README「九、许可与商业化」。

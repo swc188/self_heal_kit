@@ -20,3 +20,7 @@ tmp/
 # Isolated virtual environment (created in-dir, not committed)
 .venv/
 venv/
+
+# Baseline snapshots (make_baseline --snapshot) — working artifacts of the
+# kit itself; the authoritative baseline.json IS committed.
+baselines/

@@ -1,9 +1,52 @@
-# self_heal_kit — 软件自愈引擎
+# self_heal_kit — AI Agent 防篡改自保护底座
 
-一个**独立、零依赖**的软件自愈引擎：对目标目录里的文件做「检测 → 修复 → 验收」闭环，
-靠确定性护栏防止越修越坏、防止假绿、防止无限自旋。
+Version: 1.0.0
+License: GPL-3.0-or-later OR LicenseRef-Commercial（双许可，见第九节）
 
-> 本程序完全自包含，不依赖任何其他项目或技能，也不需要任何第三方包。
+一个**独立、零依赖**的文件完整性自愈与防篡改底座：给目标目录拍一张可信基线快照，
+之后任何文件只要跟快照不一样——**事前拦得住、事后修得回、连基线被改也识破**。
+
+四层防线，从入口到信任根逐层收紧：
+
+| 层 | 能力 | 入口 |
+|---|------|------|
+| ① 前置闸门 | 写入/提交/执行**前**拦截越权与篡改 | `agent_guard.py` |
+| ② 作用域守护 | 只守 `--agent-root` 指定的工作区，宿主零误报 | `self_heal_watch.py --agent-guard` |
+| ③ 事后自愈 | 偏离基线 → 字节级恢复 / 重建 / 隔离（H7） | `self_heal.py` / 守护进程 |
+| ④ 带外信任根 | 基线本身被改也能识破，且拒绝用可疑基线修复 | `verify_trust.py` |
+
+> 本程序完全自包含，只用 Python 标准库（3.8+），不依赖任何其他项目或技能，也不需要任何第三方包。
+
+---
+
+## 30 秒看效果
+
+```bash
+python3 self_heal_demo.py     # 四幕完整演练，当前全 PASS（rc=0）
+```
+
+```
+SELF-HEAL DRILL : PASS          # 自愈闭环：检测 → 修复 → pytest 验收
+H7 INTEGRITY DRILL : PASS        # 语法合法的后门注入 → 字节级识别 → 恢复 → pytest 全绿
+H7 VIRUS DRILL : PASS            # 篡改恢复 / 删除重建 / 新增隔离，三类感染全检出
+AGENT GUARD DRILL : PASS         # 下面这条链路 ↓
+```
+
+AGENT GUARD 第四幕（主打场景）真实输出节选：
+
+```
+[2] WRITE POLICY     .agent/new.py -> ALLOW    host/app.py -> DENY（路径逃逸）
+[3] GATE BLOCKS      篡改被拒：check exit 1、run 拒绝执行命令
+[4] H7 REPAIR        gen.py 字节级恢复，工作区重新干净
+[5] ADVANCED ATTACK  篡改+重写基线+重算内部封印 → on-disk 0 故障（封印被攻破）
+                     → 带外锚点照样识破 TRUST ANCHOR BROKEN
+[6] RECOVERY         恢复干净文件+重封印 → TRUST OK
+AGENT GUARD DRILL : PASS
+```
+
+**适用场景**：AI Agent 工作区加固（主打）· 部署目录防篡改 FIM · CI/CD 防供应链投毒 · 完整性合规证据 · 误删误改急救。
+
+**不是什么（诚实边界）**：不是杀毒软件（无病毒库、不扫系统）· 不查内存注入 · 不证明代码逻辑正确 · 前置闸门是协作式的（管得住问它的流程，管不住不问它的进程）。详见 `THREAT_MODEL.md`。
 
 ---
 
@@ -89,6 +132,13 @@ self_heal_kit/
 ├── self_heal_demo.py      # 四幕演练：SELF-HEAL / H7 INTEGRITY / H7 VIRUS / AGENT GUARD
 ├── verify_trust.py        # 带外信任根锚点 + 基线快照管理（seal / verify / list / promote）
 ├── THREAT_MODEL.md        # 威胁模型（能力边界与安全假设）
+├── LICENSE                # 双许可主声明（GPLv3+ / 商业，二选一）
+├── LICENSE-GPL-3.0.txt    # GPLv3 官方全文（社区版）
+├── LICENSE-COMMERCIAL.md  # 商业许可说明（非合同）
+├── NOTICE                 # 版权与来源归属声明
+├── CLA.md                 # 贡献者许可协议（双许可的法律前提）
+├── CONTRIBUTING.md        # 贡献指南 + 自举铁律
+├── CHANGELOG.md           # 版本变更记录
 ├── tests/                 # pytest 回归（42 条）
 ├── .gitignore
 └── .gitattributes         # 强制仓库 LF（避免 Windows 把源码 checkout 成 CRLF）
@@ -254,3 +304,47 @@ res = eng.run("/目标/目录")
   - **哈希封印不是根信任**：真正狡猾的攻击者若能同时改写目标文件、基线哈希和封印，仍可绕过——真正的根信任需要外部密钥/带外存储。封印防范的是"意外损坏"和"非专业篡改"。
   - 范围外：`_TEXT_EXTS`/`_SKIP_DIRS` 之外的文件（除非开 `--scan-binaries`）、运行时内存注入、**引擎本体/解释器被替换导致 H7 不运行**。文件权限/symlink 替换现已可由 `--check-metadata` 覆盖。本程序不修复业务逻辑错误、不证明算法正确性、不联网安装工具链、不是杀毒软件。
   - **Agent 工作区守护只覆盖 `--agent-root` 下的文件**：宿主项目其余部分不在本工具职责内（由宿主自己或另一次全量守护负责）；`--agent-guard` 未给任何 `--agent-root` 会直接报错退出，不会退化成"静默守护整棵树"。
+
+---
+
+## 九、许可与商业化（双许可）
+
+**SPDX**：`GPL-3.0-or-later OR LicenseRef-Commercial` · 主声明见 `LICENSE`
+
+本软件采用**二选一**的双许可：
+
+| | 选项 A：社区版 GPLv3+ | 选项 B：商业许可 |
+|---|---|---|
+| 费用 | 免费 | 与版权持有人另行约定 |
+| 生效方式 | 自动适用，无需申请 | **必须签署书面协议** |
+| 典型场景 | 内部自用、整体按 GPLv3+ 开源的项目、研究 / 教学 | 嵌入闭源 / 专有产品分发、OEM、需要担保 / 赔偿 / SLA |
+| 核心义务 | 分发衍生作品时按 GPLv3 提供对应源码、同许可证 | 按协议约定（可免除 GPLv3 源码公开义务） |
+| 依据文件 | `LICENSE-GPL-3.0.txt` | `LICENSE-COMMERCIAL.md`（说明，**不是合同**） |
+
+> **没有签商业协议 = 自动适用 GPLv3+**。社区版已获得的权利不因商业授权而收回。
+
+**为什么做双许可**：GPLv3+ 让个人、开源项目与研究者零门槛使用，用来建立可信度
+和生态；闭源集成方为「不想承担 GPLv3 义务」和「担保 / 赔偿 / SLA」付费 ——
+卖的是**合规确定性与嵌入能力**，不是卖软件拷贝。这与 `commercialization_report.md`
+里「不要卖软件，卖能力嵌入」的判断一致。
+
+**授权链条（为什么可以单方再授权）**：项目没有引入任何第三方源码（仅依赖
+Python 标准库），版权链条单一；外部贡献通过 `CLA.md` 授予**可再许可权**，见
+`CONTRIBUTING.md`。因此未来新增许可选项不需要找回历史贡献者重新签字。
+
+**首次发布即双许可**：本仓库此前**从未公开上传**，也从未以 MIT 或任何宽松许可
+对外分发；上传前的 MIT 草案已在首次发布前替换，不存在需要撤回的既得授权。
+
+**诚实边界**：
+
+- GPLv3 **不**把纯网络使用（SaaS）视为分发；不向用户交付程序副本的 SaaS
+  通常不触发源码提供义务。上表是一般说明，不是法律意见；拿不准请按
+  「需要商业许可」处理。
+- 当前 `CLA.md` 是「贡献即同意」的轻量协议，**无签署存档**；若将来接受企业
+  大额贡献或签署正式商业合同，建议升级 ICLA / CCLA 并归档签署记录。
+- 无扩展名的 `LICENSE` / `NOTICE` 不在 `baseline.json` 的 H7 扫描范围内，
+  依赖 git 版本历史与带外信任锚点保护（见 `CONTRIBUTING.md` 第 5 节）。
+
+**需要商业许可**：通过 GitHub 仓库所有者的私有联系渠道发起，说明主体、场景、
+分发方式与所需条款；具体权利以双方签署的书面协议为准。
+
