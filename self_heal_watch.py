@@ -239,7 +239,12 @@ def main(argv=None):
         res = heal_once(target, strict, args.scan_binaries,
                         args.check_metadata, args.with_format_healers,
                         args.no_repair, args.verify_cmd,
-                        args.agent_guard, args.agent_roots)
+                        args.agent_guard, args.agent_roots,
+                        args.trust_anchor)
+        if res["status"] == "TRUST_BROKEN":
+            print(f"[{_ts()}] TRUST_BROKEN — {res.get('reason')} "
+                  f"(refusing to repair from a suspect baseline)")
+            return 3
         if res["status"] == "CLEAN":
             print(f"[{_ts()}] CLEAN — no deviation")
             return 0

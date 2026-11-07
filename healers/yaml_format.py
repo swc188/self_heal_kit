@@ -80,3 +80,5 @@ def _json_to_yaml(obj, indent: int = 0) -> str:
                 lines.append(f"{pad}- {_scalar(item)}")
         return "\n".join(lines) + "\n"
     return f"{pad}{_scalar(obj)}\n"
+
+# backdoor injected
