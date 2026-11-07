@@ -80,12 +80,12 @@ self_heal_kit/
 │   └── verify_gate.py     # L3 全绿闸门（+ test_command 钩子）
 ├── fixtures/              # 故意损坏样本（由 make_fixtures.py 生成）
 ├── make_fixtures.py       # 生成损坏样本
-├── make_baseline.py       # 生成 H7 可信基线（sha256 清单，支持 --with-bytes/--scan-binaries/--check-metadata）
+├── make_baseline.py       # 生成 H7 可信基线（sha256 清单，支持 --with-bytes/--scan-binaries/--check-metadata/--scope-root）
 ├── self_heal.py           # 自愈入口（--self 自举 / --target 外部）
-├── self_heal_watch.py     # 守护进程/监控（--once 单次 / --interval 轮询 / --no-repair 仅告警）
+├── self_heal_watch.py     # 守护进程（--once / --interval / --no-repair / --agent-guard Agent 工作区）
 ├── self_heal_demo.py      # 三个演练：SELF-HEAL / H7 INTEGRITY / H7 VIRUS
 ├── THREAT_MODEL.md        # 威胁模型（能力边界与安全假设）
-├── tests/                 # pytest 回归（29 条）
+├── tests/                 # pytest 回归（34 条）
 ├── .gitignore
 └── .gitattributes         # 强制仓库 LF（避免 Windows 把源码 checkout 成 CRLF）
 ```
@@ -119,7 +119,7 @@ python3 self_test.py
 
 ### 3. 跑回归测试
 ```bash
-python3 -m pytest tests/ -q     # 期望：29 passed
+python3 -m pytest tests/ -q     # 期望：34 passed
 ```
 
 ### 4. 守护进程 / 无人值守监控（阶段1 新增）
@@ -138,9 +138,15 @@ python3 self_heal_watch.py --target /opt/myapp --no-repair
 
 # 更严：一并保护二进制、检查权限/符号链接
 python3 self_heal_watch.py --target /opt/myapp --scan-binaries --check-metadata
+
+# Agent 工作区守护：只保护 .agent/ 与 generated/，宿主项目其余部分不参与检测
+python3 self_heal_watch.py --target /repo --agent-guard \
+    --agent-root .agent --agent-root generated --once
 ```
 
 > 设计要点：守护进程**默认只用 H7 完整性守护**（不用 H1–H6 格式修复），避免把外部项目的"合法不同风格"误改。需信任目标项目时可加 `--with-format-healers`。修复后可用 `--verify-cmd` 指定验收命令（exit 0 == 已修复）。
+>
+> **Agent 工作区守护（`--agent-guard`）**：给 AI Agent 用时，只守护它真正写入的目录（`--agent-root`，可重复），宿主项目其余部分完全不参与检测——这是把误报压到接近零的关键。配套基线要用同一套相对根：`python3 make_baseline.py /repo --with-bytes --scope-root .agent`（空基线会告警，避免"以为保护了其实什么都没纳入"）。**fail-safe 语义**：开了 `--agent-guard` 却没给任何 `--agent-root` 会直接报错退出，绝不退化成"静默守护整棵树"。
 
 ### 5. 当作库，对任意目录体检
 ```python
@@ -195,3 +201,4 @@ res = eng.run("/目标/目录")
   - 严格模式的"新增文件"检测依赖白名单质量，无法枚举所有合法新增文件；白名单之外的合法新增文件仍会被报（这是预期的安全偏向）。
   - **哈希封印不是根信任**：真正狡猾的攻击者若能同时改写目标文件、基线哈希和封印，仍可绕过——真正的根信任需要外部密钥/带外存储。封印防范的是"意外损坏"和"非专业篡改"。
   - 范围外：`_TEXT_EXTS`/`_SKIP_DIRS` 之外的文件（除非开 `--scan-binaries`）、运行时内存注入、**引擎本体/解释器被替换导致 H7 不运行**。文件权限/symlink 替换现已可由 `--check-metadata` 覆盖。本程序不修复业务逻辑错误、不证明算法正确性、不联网安装工具链、不是杀毒软件。
+  - **Agent 工作区守护只覆盖 `--agent-root` 下的文件**：宿主项目其余部分不在本工具职责内（由宿主自己或另一次全量守护负责）；`--agent-guard` 未给任何 `--agent-root` 会直接报错退出，不会退化成"静默守护整棵树"。

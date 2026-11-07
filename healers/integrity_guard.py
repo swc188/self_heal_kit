@@ -166,7 +166,8 @@ def _load_baseline_manifest(target_dir: str) -> dict | None:
 def make_baseline(target_dir: str, manifest_path: str | None = None,
                   exts=_TEXT_EXTS, with_bytes: bool = False,
                   scan_binaries: bool = False,
-                  check_metadata: bool = False) -> dict:
+                  check_metadata: bool = False,
+                  scope_roots: list | None = None) -> dict:
     """Compute a sha256 baseline for all in-scope files under target_dir.
 
     Returns the manifest dict ``{relpath: sha256}`` and writes it to
@@ -183,6 +184,10 @@ def make_baseline(target_dir: str, manifest_path: str | None = None,
       * ``check_metadata`` — additionally record each file's permission mode and
         whether it is a symlink under ``__meta__``; deviations are then detected
         and the permission mode is auto-restored.
+      * ``scope_roots`` — restrict the baseline to files under these relative
+        roots (e.g. ``[".agent", "generated"]``). Used by agent-guard mode so
+        the manifest only describes the agent workspace instead of the whole
+        host project.
     """
     from .base import _SKIP_DIRS
     manifest = {}
@@ -190,13 +195,16 @@ def make_baseline(target_dir: str, manifest_path: str | None = None,
         dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
         for fn in files:
             p = os.path.join(root, fn)
+            rel = os.path.relpath(p, target_dir).replace("\\", "/")
+            # Agent-guard scope: only baselined roots (when configured).
+            if scope_roots and not _is_under(rel, scope_roots):
+                continue
             if not scan_binaries:
                 # Default: skip binaries and only keep known text/source exts.
                 if any(p.endswith(e) for e in _BINARY_EXTS):
                     continue
                 if not any(p.endswith(e) for e in exts):
                     continue
-            rel = os.path.relpath(p, target_dir).replace("\\", "/")
             manifest[rel] = _sha256_file(p)
     if check_metadata:
         meta = {}
@@ -243,6 +251,17 @@ def _decode_bytes(raw) -> bytes | None:
     return raw if isinstance(raw, bytes) else None
 
 
+def _is_under(rel: str, roots: list[str]) -> bool:
+    rel = rel.replace("\\", "/")
+    for root in roots:
+        root = root.strip().strip("/").replace("\\", "/")
+        if not root:
+            continue
+        if rel == root or rel.startswith(root + "/"):
+            return True
+    return False
+
+
 def _is_whitelisted(rel: str, whitelist) -> bool:
     # Normalise Windows separators to "/".
     rel = rel.replace("\\", "/")
@@ -273,7 +292,9 @@ class IntegrityGuardHealer(Healer):
                  detect_new_files: bool = False,
                  new_file_whitelist: set | None = None,
                  scan_binaries: bool = False,
-                 check_metadata: bool = False):
+                 check_metadata: bool = False,
+                 agent_guard: bool = False,
+                 agent_guard_roots: list | None = None):
         # If a baseline dict is injected (tests / runtime), it wins.
         self._baseline = baseline
         # Strict mode: files not present in the baseline are reported as
@@ -285,6 +306,18 @@ class IntegrityGuardHealer(Healer):
         self.scan_binaries = scan_binaries
         # Detect/restore permission-mode and symlink-substitution changes.
         self.check_metadata = check_metadata
+        # Agent-guard: when enabled, ONLY files under one of agent_guard_roots
+        # are in scope (TAMPER / DELETE / ADD / metadata). Everything else is
+        # ignored. Rationale: an AI agent usually lives inside a large or
+        # unrelated project; guarding the whole thing produces noise. This
+        # narrows the blast radius to the workspace the agent actually writes
+        # to (e.g. ``.agent/`` or ``generated/``).
+        self.agent_guard = agent_guard
+        self.agent_guard_roots = list(agent_guard_roots or [])
+        # Remembered from the last detect(): an INJECTED baseline (tests /
+        # library use) has no baseline.json on disk, so repair() cannot resolve
+        # the base directory from the filesystem and needs this instead.
+        self._last_target = None
         # Set during detect() when the on-disk manifest seal is broken.
         self._baseline_tampered = False
 
@@ -373,8 +406,23 @@ class IntegrityGuardHealer(Healer):
                 return blob
         return None
 
+    def _in_scope(self, rel: str) -> bool:
+        """Return True when ``rel`` is inside the guarded scope.
+
+        Normal mode protects everything the baseline covers. Agent-guard mode
+        protects ONLY files under one of ``agent_guard_roots`` — this keeps a
+        large host project (and its tool caches) free of false positives while
+        still locking down the workspace the agent actually writes to. With no
+        roots configured nothing is in scope (fail-safe: guard nothing rather
+        than silently guarding the whole tree).
+        """
+        if not self.agent_guard:
+            return True
+        return _is_under(rel, self.agent_guard_roots)
+
     # -- detect -------------------------------------------------------------
     def detect(self, target_dir: str):
+        self._last_target = target_dir
         faults = []
         baseline = self._resolve_baseline(target_dir)
         if baseline is None:
@@ -398,6 +446,9 @@ class IntegrityGuardHealer(Healer):
             if rel == "baseline.json":
                 # The manifest itself is metadata, not program source.
                 continue
+            if not self._in_scope(rel):
+                # Agent-guard: ignore files outside the guarded workspace.
+                continue
             seen.add(rel)
             expected = baseline.get(rel)
             if expected is None:
@@ -419,6 +470,8 @@ class IntegrityGuardHealer(Healer):
         if self.check_metadata:
             meta = baseline.get("__meta__") or {}
             for rel, m in meta.items():
+                if not self._in_scope(rel):
+                    continue
                 p = os.path.join(target_dir, rel)
                 if not os.path.exists(p):
                     continue  # missing file handled by DELETE branch below
@@ -450,6 +503,10 @@ class IntegrityGuardHealer(Healer):
         for rel, expected in baseline.items():
             if rel in ("__bytes__", "__seal__", "__tampered__", "__meta__"):
                 continue
+            if not self._in_scope(rel):
+                # Agent-guard: a baseline entry outside the workspace is not
+                # this guard's business (the host project owns it).
+                continue
             p = os.path.join(target_dir, rel)
             if not os.path.exists(p):
                 faults.append(Fault(
@@ -461,6 +518,11 @@ class IntegrityGuardHealer(Healer):
     # -- repair -------------------------------------------------------------
     def repair(self, fault: Fault) -> RepairResult:
         base_dir = self._find_target_root(fault.path)
+        if base_dir is None and self._baseline is not None:
+            # Injected baseline (tests / library use): there is no
+            # baseline.json on disk to locate, so fall back to the directory
+            # the last detect() scanned.
+            base_dir = self._last_target
         if base_dir is None:
             return RepairResult(self.name, fault.path, False,
                                 "cannot locate trusted baseline (no git / "

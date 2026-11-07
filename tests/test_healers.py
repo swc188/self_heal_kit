@@ -28,6 +28,15 @@ def _write_text(path, text):
         fh.write(text)
 
 
+def _sha_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _sha(path) -> str:
+    with open(path, "rb") as fh:
+        return _sha_bytes(fh.read())
+
+
 def test_h1_line_ending_detect_and_repair():
     d = tempfile.mkdtemp()
     p = os.path.join(d, "f.txt")
@@ -560,4 +569,104 @@ def test_whitelist_matches_nested_dir_any_depth():
     faults = h.detect(d)
     assert any(f.path.endswith("rogue.py") for f in faults), \
         [f.path for f in faults]
+
+
+def test_agent_guard_ignores_files_outside_scope():
+    """Agent-guard: a tampered file OUTSIDE the guarded roots is not a fault.
+
+    This is the core value of the mode: an AI agent lives inside a big host
+    project, and guarding the whole tree produces noise. Only the workspace it
+    writes to should be under integrity control.
+    """
+    from healers.integrity_guard import IntegrityGuardHealer
+
+    d = tempfile.mkdtemp()
+    agent = os.path.join(d, ".agent")
+    os.makedirs(agent, exist_ok=True)
+    gen = os.path.join(agent, "gen.py")
+    with open(gen, "w", encoding="utf-8") as fh:
+        fh.write("print('ok')\n")
+    host = os.path.join(d, "host_module.py")
+    with open(host, "w", encoding="utf-8") as fh:
+        fh.write("x = 1\n")
+
+    baseline = {
+        ".agent/gen.py": _sha(gen),
+        "host_module.py": _sha(host),
+    }
+
+    # Tamper the HOST file only.
+    with open(host, "w", encoding="utf-8") as fh:
+        fh.write("x = 2\n")
+
+    h = IntegrityGuardHealer(baseline=baseline, agent_guard=True,
+                             agent_guard_roots=[".agent"])
+    faults = h.detect(d)
+    assert faults == [], [f.description for f in faults]
+
+
+def test_agent_guard_detects_and_repairs_inside_scope():
+    """Agent-guard: tampering INSIDE the guarded root is still detected+healed."""
+    from healers.integrity_guard import IntegrityGuardHealer
+
+    d = tempfile.mkdtemp()
+    agent = os.path.join(d, ".agent")
+    os.makedirs(agent, exist_ok=True)
+    gen = os.path.join(agent, "gen.py")
+    original = b"print('trusted')\n"
+    with open(gen, "wb") as fh:
+        fh.write(original)
+
+    baseline = {
+        ".agent/gen.py": _sha_bytes(original),
+        "__bytes__": {".agent/gen.py": original.hex()},
+    }
+
+    with open(gen, "wb") as fh:
+        fh.write(b"print('owned by attacker')\n")
+
+    h = IntegrityGuardHealer(baseline=baseline, agent_guard=True,
+                             agent_guard_roots=[".agent"])
+    faults = h.detect(d)
+    assert any(f.path == gen for f in faults), [f.description for f in faults]
+
+    res = h.repair(faults[0])
+    assert res.changed is True
+    with open(gen, "rb") as fh:
+        assert fh.read() == original
+    assert h.detect(d) == []
+
+
+def test_agent_guard_without_roots_guards_nothing():
+    """Fail-safe: agent_guard with no roots protects nothing (no silent full tree)."""
+    from healers.integrity_guard import IntegrityGuardHealer
+
+    d = tempfile.mkdtemp()
+    p = os.path.join(d, "app.py")
+    with open(p, "wb") as fh:
+        fh.write(b"x = 1\n")
+    baseline = {"app.py": _sha(p)}
+
+    with open(p, "wb") as fh:
+        fh.write(b"x = 2\n")
+
+    h = IntegrityGuardHealer(baseline=baseline, agent_guard=True,
+                             agent_guard_roots=[])
+    assert h.detect(d) == []
+
+
+def test_scope_roots_baseline_only_includes_scope():
+    """make_baseline(scope_roots=...) only baselines files under those roots."""
+    from healers.integrity_guard import make_baseline
+
+    d = tempfile.mkdtemp()
+    os.makedirs(os.path.join(d, ".agent"), exist_ok=True)
+    with open(os.path.join(d, ".agent", "gen.py"), "w", encoding="utf-8") as fh:
+        fh.write("print('in')\n")
+    with open(os.path.join(d, "host.py"), "w", encoding="utf-8") as fh:
+        fh.write("x = 1\n")
+
+    manifest = make_baseline(d, scope_roots=[".agent"])
+    tracked = {k for k in manifest if not k.startswith("__")}
+    assert tracked == {".agent/gen.py"}, tracked
 

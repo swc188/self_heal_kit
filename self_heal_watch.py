@@ -18,6 +18,10 @@ Design choices (and why):
     a long-lived process.
   * ``--no-repair`` switches to monitor-only: it reports and logs deviations but
     never touches the files (alerting / SIEM feed use case).
+  * ``--agent-guard`` narrows the watch to an AI agent's workspace: only files
+    under the given ``--agent-root`` (relative to the target, repeatable) are
+    checked and restored. Everything else in the host project stays out of
+    scope, which is what keeps false positives near zero inside a big repo.
   * ``--verify-cmd`` optionally runs a test command after repair as the final
     "healed" proof (same contract as the engine: exit 0 == healed).
 
@@ -25,6 +29,8 @@ Usage:
     python self_heal_watch.py --self --once
     python self_heal_watch.py --target /opt/myapp --interval 300 --log watch.log
     python self_heal_watch.py --target /opt/myapp --no-repair   # alert only
+    python self_heal_watch.py --target /repo --agent-guard \
+        --agent-root .agent --agent-root generated --once
 """
 
 from __future__ import annotations
@@ -43,7 +49,8 @@ def _ts() -> str:
 
 
 def _build_healers(strict: bool, scan_binaries: bool, check_metadata: bool,
-                   with_format: bool):
+                   with_format: bool, agent_guard: bool = False,
+                   agent_roots=None):
     from healers.integrity_guard import (
         IntegrityGuardHealer, DEFAULT_NEW_FILE_WHITELIST)
     from healers.line_ending import LineEndingHealer
@@ -58,7 +65,9 @@ def _build_healers(strict: bool, scan_binaries: bool, check_metadata: bool,
             detect_new_files=strict,
             new_file_whitelist=DEFAULT_NEW_FILE_WHITELIST,
             scan_binaries=scan_binaries,
-            check_metadata=check_metadata),
+            check_metadata=check_metadata,
+            agent_guard=agent_guard,
+            agent_guard_roots=list(agent_roots or [])),
     ]
     if with_format:
         healers += [
@@ -69,11 +78,13 @@ def _build_healers(strict: bool, scan_binaries: bool, check_metadata: bool,
 
 
 def heal_once(target: str, strict: bool, scan_binaries: bool,
-             check_metadata: bool, with_format: bool, no_repair: bool,
-             verify_cmd) -> dict:
+              check_metadata: bool, with_format: bool, no_repair: bool,
+              verify_cmd, agent_guard: bool = False,
+              agent_roots=None) -> dict:
     from engine import SelfHealEngine
 
-    healers = _build_healers(strict, scan_binaries, check_metadata, with_format)
+    healers = _build_healers(strict, scan_binaries, check_metadata, with_format,
+                             agent_guard, agent_roots)
     eng = SelfHealEngine(healers=healers, test_command=verify_cmd)
 
     if no_repair:
@@ -109,13 +120,15 @@ def run_loop(target, args):
     emit(f"WATCH START target={target} interval={args.interval}s "
          f"strict={args.strict} scan_binaries={args.scan_binaries} "
          f"check_metadata={args.check_metadata} "
-         f"with_format={args.with_format} no_repair={args.no_repair}")
+         f"with_format={args.with_format} no_repair={args.no_repair} "
+         f"agent_guard={args.agent_guard} agent_roots={args.agent_roots}")
 
     while not stop:
         try:
             res = heal_once(target, args.strict, args.scan_binaries,
-                           args.check_metadata, args.with_format,
-                           args.no_repair, args.verify_cmd)
+                            args.check_metadata, args.with_format,
+                            args.no_repair, args.verify_cmd,
+                            args.agent_guard, args.agent_roots)
         except KeyboardInterrupt:
             emit("WATCH STOP (keyboard interrupt)")
             break
@@ -160,10 +173,24 @@ def main(argv=None):
                         help="检测/还原权限位与符号链接替换")
     parser.add_argument("--with-format-healers", action="store_true",
                         help="除 H7 外也运行 H1-H6 格式修复（需信任目标项目）")
+    parser.add_argument("--agent-guard", action="store_true",
+                        help="Agent 工作区守护：只检查/修复 --agent-root 下的文件")
+    parser.add_argument("--agent-root", action="append", default=None,
+                        dest="agent_roots", metavar="REL",
+                        help="要守护的相对根目录（可重复，如 .agent / generated）")
     parser.add_argument("--verify-cmd", default=None,
                         help="修复后运行的验收命令（exit 0 == 已修复）")
     parser.add_argument("--log", default=None, help="日志文件路径")
     args = parser.parse_args(argv)
+
+    # --agent-root implies agent-guard; agent-guard without any root would put
+    # nothing in scope, so refuse instead of pretending to protect the tree.
+    args.agent_roots = list(args.agent_roots or [])
+    if args.agent_roots:
+        args.agent_guard = True
+    if args.agent_guard and not args.agent_roots:
+        parser.error("--agent-guard 需要至少一个 --agent-root（相对目标目录，"
+                     "如 .agent）")
 
     if args.self:
         target = HERE
@@ -181,7 +208,8 @@ def main(argv=None):
     if args.once:
         res = heal_once(target, strict, args.scan_binaries,
                         args.check_metadata, args.with_format_healers,
-                        args.no_repair, args.verify_cmd)
+                        args.no_repair, args.verify_cmd,
+                        args.agent_guard, args.agent_roots)
         if res["status"] == "CLEAN":
             print(f"[{_ts()}] CLEAN — no deviation")
             return 0
