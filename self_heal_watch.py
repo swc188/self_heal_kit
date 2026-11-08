@@ -158,6 +158,9 @@ def maintain_once(target: str, trust_anchor: str | None) -> tuple[bool, str]:
 def run_loop(target, args):
     log = args.log
     stop = False
+    # Maintenance state
+    maintain_interval = args.maintain_interval
+    last_maintain = 0
 
     def emit(msg: str):
         line = f"{_ts()} {msg}"
@@ -174,9 +177,22 @@ def run_loop(target, args):
          f"check_metadata={args.check_metadata} "
          f"with_format={args.with_format} no_repair={args.no_repair} "
          f"agent_guard={args.agent_guard} agent_roots={args.agent_roots} "
-         f"trust_anchor={args.trust_anchor}")
+         f"trust_anchor={args.trust_anchor}"
+         f" maintain_interval={maintain_interval}s maintain_first={args.maintain_first}")
+
+    # Initial maintenance if requested
+    if maintain_interval > 0 and args.maintain_first:
+        ok, detail = maintain_once(target, args.trust_anchor)
+        emit(f"MAINTENANCE {'OK' if ok else 'FAILED'} — {detail}")
 
     while not stop:
+        now = time.time()
+        # Periodic maintenance
+        if maintain_interval > 0 and (now - last_maintain) >= maintain_interval:
+            ok, detail = maintain_once(target, args.trust_anchor)
+            emit(f"MAINTENANCE {'OK' if ok else 'FAILED'} — {detail}")
+            last_maintain = now
+
         try:
             res = heal_once(target, args.strict, args.scan_binaries,
                             args.check_metadata, args.with_format,
@@ -241,6 +257,10 @@ def main(argv=None):
                         help="带外信任根锚点（verify_trust.py seal 生成）；"
                              "锚点失配时拒绝修复（fail-closed）")
     parser.add_argument("--log", default=None, help="日志文件路径")
+    parser.add_argument("--maintain-interval", type=int, default=0, metavar="SECS",
+                        help="定期重新生成基线并重新封印锚点的间隔秒数（>0 启用）")
+    parser.add_argument("--maintain-first", action="store_true",
+                        help="启动时立即执行一次维护（配合 --maintain-interval）")
     args = parser.parse_args(argv)
 
     # --agent-root implies agent-guard; agent-guard without any root would put
@@ -271,6 +291,11 @@ def main(argv=None):
     args.with_format = args.with_format_healers
 
     if args.once:
+        # Initial maintenance if requested (even in --once mode)
+        if args.maintain_interval > 0 and args.maintain_first:
+            ok, detail = maintain_once(target, args.trust_anchor)
+            print(f"[{_ts()}] MAINTENANCE {'OK' if ok else 'FAILED'} — {detail}")
+
         res = heal_once(target, strict, args.scan_binaries,
                         args.check_metadata, args.with_format_healers,
                         args.no_repair, args.verify_cmd,
