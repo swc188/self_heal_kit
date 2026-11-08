@@ -120,6 +120,41 @@ def _fmt_faults(faults) -> str:
     return "\n".join(lines)
 
 
+def maintain_once(target: str, trust_anchor: str | None) -> tuple[bool, str]:
+    """Regenerate baseline with bytes and re-seal the out-of-band anchor.
+
+    This is the "定期自我维护" action: the watcher periodically refreshes its
+    own trusted baseline so that legitimate changes (e.g. intentional
+    configuration updates) are incorporated into the baseline rather than
+    flagged as deviations. The anchor is re-sealed to match the new baseline.
+
+    Returns (ok, detail).
+    """
+    try:
+        from healers.integrity_guard import make_baseline
+        from guards.trust_root import seal_file
+    except Exception as e:
+        return False, f"import failed: {e}"
+
+    # Regenerate baseline with embedded bytes (portable restore without git).
+    try:
+        make_baseline(target, with_bytes=True)
+    except Exception as e:
+        return False, f"baseline regeneration failed: {e}"
+
+    # Re-seal the out-of-band anchor if configured.
+    if trust_anchor:
+        baseline_path = os.path.join(target, "baseline.json")
+        try:
+            rec = seal_file(baseline_path, os.path.abspath(trust_anchor))
+            return True, (f"baseline regenerated & anchor resealed "
+                          f"(sha256={rec['sha256'][:12]}…)")
+        except Exception as e:
+            return False, f"anchor reseal failed: {e}"
+
+    return True, "baseline regenerated (no anchor to reseal)"
+
+
 def run_loop(target, args):
     log = args.log
     stop = False
