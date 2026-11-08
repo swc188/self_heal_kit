@@ -27,7 +27,10 @@ _TEXT_EXTS = (".py", ".txt", ".yaml", ".yml", ".json", ".toml", ".cfg", ".ini")
 # 目录/文件里出现双花括号（两个连续左花括号或两个连续右花括号）通常是
 # 合法的（文档示例、测试夹具、故意样本），跳过。
 _SKIP_DIR_NAMES = {"tests", "fixtures", "docs", "work", "analysis", "__pycache__",
-                   ".git", ".venv", ".pytest_cache"}
+                   ".git", ".venv", ".pytest_cache",
+                   # GitHub Actions 表达式 ${{ ... }} 是合法模板语法，不是
+                   # 花括号转义泄漏；按目录组件跳过整个 workflow 目录。
+                   ".github"}
 _SKIP_FILE_NAMES = {"README.md", "self_heal_demo.py", "self_test.py",
                     "make_fixtures.py", "run_integration_demo.py",
                     "sample_leak.py",

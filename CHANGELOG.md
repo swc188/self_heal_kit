@@ -45,6 +45,10 @@ All notable changes to self_heal_kit. Format loosely follows
   构建产物既不进基线、也不被严格模式判为「恶意新增文件」；白名单的目录
   匹配改用 `fnmatch`（对原有精确目录名行为完全不变）。否则用户照
   `pip install -e .` 装一次，`--self` 就会把自己的构建产物隔离掉。
+- **H2 误伤 CI 工作流**（四幕演练逼出）：`.github/workflows/ci.yml` 的
+  `${{ matrix.python-version }}` 是合法的 GitHub Actions 表达式，却被
+  `brace_escape` 判为花括号转义泄漏，令第二幕 `FAILED_CLOSED`；现按目录
+  组件跳过 `.github/`（与此前 `agent_guard.py` 的自排除同一思路）。
 - README 增「环境要求与安装」段与 6 个 CLI 入口、目录结构补齐、测试命令
   统一为 `pytest -q`；`CONTRIBUTING.md` 同步。
 
