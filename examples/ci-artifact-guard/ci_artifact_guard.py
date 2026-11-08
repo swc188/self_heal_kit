@@ -40,6 +40,7 @@ KIT_ROOT = os.path.dirname(os.path.dirname(HERE))
 if KIT_ROOT not in sys.path:
     sys.path.insert(0, KIT_ROOT)
 
+# Demo artifacts: text + binary
 TRUSTED = {
     "bundle.py": (
         "# trusted build output\n"
@@ -47,6 +48,10 @@ TRUSTED = {
         "    return 'clean'\n"
     ),
     "SHA256SUMS.txt": "bundle.py  <sealed at build time>\n",
+}
+# A small binary artifact (fake .exe content)
+TRUSTED_BIN = {
+    "app.exe": b"MZ\x90\x00" + b"\x00" * 60,  # Minimal PE header
 }
 BACKDOOR = (
     "\n# injected by an untrusted step\n"
@@ -70,24 +75,28 @@ def _write(path, data):
         fh.write(data)
 
 
-def _make_baseline(dist):
+def _make_baseline(dist, scan_binaries=False):
     script = os.path.join(KIT_ROOT, "make_baseline.py")
+    cmd = [sys.executable, script, dist, "--with-bytes"]
+    if scan_binaries:
+        cmd.append("--scan-binaries")
     proc = subprocess.run(
-        [sys.executable, script, dist, "--with-bytes"],
+        cmd,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     if proc.returncode != 0:
         raise RuntimeError("make_baseline failed: " + proc.stdout.strip())
     return proc.stdout.strip()
 
 
-def _engine():
+def _engine(scan_binaries=False):
     from engine import SelfHealEngine
     from healers.integrity_guard import (
         IntegrityGuardHealer, DEFAULT_NEW_FILE_WHITELIST)
 
     guard = IntegrityGuardHealer(
         detect_new_files=True,
-        new_file_whitelist=DEFAULT_NEW_FILE_WHITELIST)
+        new_file_whitelist=DEFAULT_NEW_FILE_WHITELIST,
+        scan_binaries=scan_binaries)
     return SelfHealEngine(healers=[guard], test_command=None)
 
 
@@ -104,15 +113,15 @@ def _quarantined(dist, name):
     return None
 
 
-def check(target, repair=True):
+def check(target, repair=True, scan_binaries=False):
     manifest = os.path.join(target, "baseline.json")
     if not os.path.isfile(manifest):
         print("ERROR: no trusted baseline.json in " + target)
         print("       generate one first: python make_baseline.py "
-              + target + " --with-bytes")
+              + target + " --with-bytes" + (" --scan-binaries" if scan_binaries else ""))
         return 2
 
-    eng = _engine()
+    eng = _engine(scan_binaries)
     faults = eng.detect_all(target)
     if not faults:
         print("CLEAN — artifacts match the trusted baseline (" + target + ")")
@@ -143,33 +152,42 @@ def demo():
         dist = os.path.join(tmp, "dist")
         os.makedirs(dist)
 
-        # 1) A trusted build step produces artifacts.
+        # 1) A trusted build step produces artifacts (text + binary).
         for name, text in TRUSTED.items():
             _write(os.path.join(dist, name), text.encode("utf-8"))
+        for name, data in TRUSTED_BIN.items():
+            _write(os.path.join(dist, name), data)
         original = dict((name, _sha(text.encode("utf-8")))
                         for name, text in TRUSTED.items())
-        print("[1] BUILD     " + ", ".join(sorted(TRUSTED)))
+        for name, data in TRUSTED_BIN.items():
+            original[name] = _sha(data)
+        all_artifacts = sorted(list(TRUSTED.keys()) + list(TRUSTED_BIN.keys()))
+        print("[1] BUILD     " + ", ".join(all_artifacts))
 
         # 2) Seal them immediately, while the tree is still trusted.
-        print("[2] BASELINE  " + _make_baseline(dist))
+        print("[2] BASELINE  " + _make_baseline(dist, scan_binaries=True))
 
         # 3) An untrusted step tampers, deletes and drops a file.
         bundle = os.path.join(dist, "bundle.py")
         _write(bundle, _read(bundle) + BACKDOOR.encode("utf-8"))
         os.remove(os.path.join(dist, "SHA256SUMS.txt"))
         _write(os.path.join(dist, "evil.txt"), DROPPED.encode("utf-8"))
+        # Also tamper the binary
+        exe = os.path.join(dist, "app.exe")
+        _write(exe, _read(exe) + b"INJECTED")
         print("[3] ATTACK    tamper bundle.py / delete SHA256SUMS.txt "
-              "/ drop evil.txt")
+              "/ drop evil.txt / tamper app.exe")
 
-        # 4) Detect before repairing: all three deviation classes must show.
-        eng = _engine()
+        # 4) Detect before repairing: all four deviation classes must show.
+        eng = _engine(scan_binaries=True)
         faults = eng.detect_all(dist)
         descs = " ".join(f.description for f in faults)
-        # Match H7's real fault descriptions, not invented labels.
+        # Check for each fault type by looking at the actual fault objects
         classes = [
-            ("tamper", "!=" in descs and "baseline" in descs),
-            ("delete", "baseline file missing" in descs),
-            ("new file", "unexpected file" in descs),
+            ("tamper (text)", any("bundle.py" in f.path and "!=" in f.description for f in faults)),
+            ("tamper (binary)", any("app.exe" in f.path and "!=" in f.description for f in faults)),
+            ("delete", any("baseline file missing" in f.description for f in faults)),
+            ("new file", any("unexpected file" in f.description for f in faults)),
         ]
         print("[4] DETECT    " + str(len(faults)) + " deviation(s)")
         _show_faults(faults)
@@ -208,6 +226,8 @@ def main(argv=None):
                     help="artifact directory to check (contains baseline.json)")
     ap.add_argument("--no-repair", action="store_true",
                     help="report deviations only, do not restore (CI gate)")
+    ap.add_argument("--scan-binaries", action="store_true",
+                    help="include binary artifacts (.exe/.dll/.so/...) in integrity scope")
     args = ap.parse_args(argv)
 
     if args.demo and args.target:
@@ -220,7 +240,7 @@ def main(argv=None):
     if not os.path.isdir(target):
         print("ERROR: not a directory: " + target)
         return 2
-    return check(target, repair=not args.no_repair)
+    return check(target, repair=not args.no_repair, scan_binaries=args.scan_binaries)
 
 
 if __name__ == "__main__":
