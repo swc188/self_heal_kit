@@ -52,6 +52,20 @@ All notable changes to self_heal_kit. Format loosely follows
 - README 增「环境要求与安装」段与 6 个 CLI 入口、目录结构补齐、测试命令
   统一为 `pytest -q`；`CONTRIBUTING.md` 同步。
 
+### Pre-publish（首次上传前的收尾）
+
+- **提交身份历史改写**：全部 26 条本地提交的 author / committer 邮箱由
+  `swc18@local` 统一为 GitHub 提供的 `ID+USERNAME@users.noreply.github.com`，
+  使 push 后提交能关联账号并计入贡献图，同时不公开真实邮箱。仓库**从未 push**，
+  因此改写在发布前完成，不涉及「改写已发布历史」；作者名保持 `swc18`。
+  改写仅动 commit 元数据：被保护文件内容、`baseline.json` 的 sha256 封印、
+  带外信任锚点与发布包内容均不受影响（锚点不绑定 commit hash）。
+- **CI badge**：README 首屏加入指向 `.github/workflows/ci.yml` 的状态徽章；
+  首次运行需在 push 后确认，徽章会自动反映真实结果，无需再改文档。
+- **`SECURITY.md` 路径校正**：按 GitHub 官方文档把私下漏洞报告入口改为
+  `Settings` → `Security and quality` → `Advanced Security` →
+  `Private vulnerability reporting` → `Enable`（仅 public 仓库、需 admin）。
+
 ### Added
 
 - **H7 完整性守护**（`healers/integrity_guard.py`）：以 `baseline.json`

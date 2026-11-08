@@ -1,5 +1,7 @@
 # self_heal_kit — AI Agent 防篡改自保护底座
 
+[![CI](https://github.com/swc188/self_heal_kit/actions/workflows/ci.yml/badge.svg)](https://github.com/swc188/self_heal_kit/actions/workflows/ci.yml)
+
 Version: 1.0.0
 License: GPL-3.0-or-later OR LicenseRef-Commercial（双许可，见第九节）
 

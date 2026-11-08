@@ -7,8 +7,9 @@
 **请私下报告，不要在公开 Issue / Discussion / PR 里贴漏洞细节或 PoC。**
 
 - 首选：在本仓库 GitHub 页面使用 **Report a vulnerability**
-  （Settings → Security → Private vulnerability reporting；仓库所有者需在上传后
-  确认该功能已启用）。
+  （`Settings` → 侧栏 `Security and quality` → `Advanced Security` →
+  `Private vulnerability reporting` → `Enable`；仅 public 仓库可用，
+  且需要仓库 admin 权限）。
 - 备选：通过 **GitHub 仓库所有者（repository owner）的私有联系渠道** 发起，
   主题注明 `security: self_heal_kit`。
 - 如果两者都联系不上，可开一个**不含任何细节**的 issue 只请求建立私下渠道。
