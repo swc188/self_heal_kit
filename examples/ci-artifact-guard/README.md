@@ -16,16 +16,17 @@
 python examples/ci-artifact-guard/ci_artifact_guard.py --demo
 ```
 
-它会：生成两个可信产物 → 用 `make_baseline.py --with-bytes` 封印 →
-注入三类偏离（篡改 `bundle.py`、删除 `SHA256SUMS.txt`、投放 `evil.txt`）
-→ 打印检测到的三类故障 → 调用 H7-only 引擎自愈 → 逐项验证字节一致、
-删除文件重建、新增文件被隔离到 `.quarantine/`。
+它会：生成三个可信产物（含二进制 `app.exe`）→ 用 `make_baseline.py --with-bytes --scan-binaries` 封印 →
+注入四类偏离（篡改 `bundle.py`、篡改 `app.exe`、删除 `SHA256SUMS.txt`、投放 `evil.txt`）
+→ 打印检测到的四类故障 → 调用 H7-only 引擎自愈 → 逐项验证字节一致、
+删除文件重建、二进制字节级恢复、新增文件被隔离到 `.quarantine/`。
 
 预期结尾：
 
 ```
       OK  bundle.py byte-exact restored
       OK  SHA256SUMS.txt byte-exact restored
+      OK  app.exe byte-exact restored
       OK  evil.txt quarantined (reversible)
       OK  no remaining deviations
 RESULT: PASS
@@ -50,14 +51,18 @@ jobs:
       - name: Build
         run: python build.py --out dist/
       - name: Seal trusted artifacts (trusted step, right after build)
-        run: python make_baseline.py dist/ --with-bytes
+        run: python make_baseline.py dist/ --with-bytes --scan-binaries
       - name: Verify before publish
-        run: python examples/ci-artifact-guard/ci_artifact_guard.py --target dist/
+        run: python examples/ci-artifact-guard/ci_artifact_guard.py --target dist/ --scan-binaries
 ```
 
 `--target` 默认会**修复**偏离并继续；只想告警、让流水线红灯，用
 `--no-repair`（有偏离即退出 1）。两种模式都要求目标目录里已有
 `baseline.json`，否则退出 2 并提示生成命令。
+
+**二进制产物**（Windows 安装器 `.exe`、Linux 共享库 `.so`、Docker layer 等）请在
+`make_baseline.py` 与 `ci_artifact_guard.py` 两处**同时**加上 `--scan-binaries`，
+否则二进制文件会被默认白名单跳过、不纳入完整性保护。
 
 把 `baseline.json` 连同 `verify_trust.py seal` 的带外锚点一起存到
 流水线之外的只读位置，可信度会更高 —— 只在产物目录内部留基线，
