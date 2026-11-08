@@ -1,0 +1,68 @@
+# GitLab CI: 构建产物完整性守护
+# 复制到你的仓库根目录 .gitlab-ci.yml
+
+stages:
+  - build
+  - seal
+  - guard
+  - publish
+
+variables:
+  PYTHON_VERSION: "3.11"
+  ARTIFACT_DIR: "dist/"
+
+build:
+  stage: build
+  image: python:${PYTHON_VERSION}
+  script:
+    - pip install -q -r requirements.txt 2>/dev/null || true
+    - python build.py --out $ARTIFACT_DIR
+  artifacts:
+    paths:
+      - $ARTIFACT_DIR
+    expire_in: 1 week
+
+seal:
+  stage: seal
+  image: python:${PYTHON_VERSION}
+  needs: [build]
+  script:
+    - python -m pip install -q -e .[dev] 2>/dev/null || pip install -q .
+    - python make_baseline.py $ARTIFACT_DIR --with-bytes --scan-binaries
+  artifacts:
+    paths:
+      - ${ARTIFACT_DIR}baseline.json
+    expire_in: 1 week
+  # 关键：seal 必须在可信环境、紧跟 build 之后运行
+  # 生成的 baseline.json 作为 artifact 传给下一阶段
+
+guard:
+  stage: guard
+  image: python:${PYTHON_VERSION}
+  needs: [seal]
+  script:
+    - python -m pip install -q -e .[dev] 2>/dev/null || pip install -q .
+    - python examples/ci-artifact-guard/ci_artifact_guard.py --target $ARTIFACT_DIR --scan-binaries
+  allow_failure: false  # 有偏离即红灯，阻断发布
+
+# 可选：带外锚点校验（需要只读存储位置）
+# guard_anchor:
+#   stage: guard
+#   image: python:${PYTHON_VERSION}
+#   needs: [seal]
+#   script:
+#     - python -m pip install -q -e .[dev] 2>/dev/null || pip install -q .
+#     - python verify_trust.py verify --target $ARTIFACT_DIR --anchor $READONLY_ANCHOR_PATH
+#   allow_failure: false
+
+publish:
+  stage: publish
+  image: python:${PYTHON_VERSION}
+  needs: [guard]
+  script:
+    - echo "发布 $ARTIFACT_DIR 到制品库 / PyPI / Docker Registry ..."
+    - # 你的发布逻辑
+  only:
+    - main
+    - tags
+  when: manual  # 或自动，视策略而定

@@ -1,0 +1,88 @@
+/*
+ * Jenkins Pipeline: 构建产物完整性守护
+ * 复制到你的仓库根目录 Jenkinsfile
+ * 需求：Jenkins 2.176+，Pipeline 插件，Docker Agent 或 Python 已安装
+ */
+
+pipeline {
+    agent none  // 各阶段自行指定 agent
+
+    environment {
+        PYTHON_VERSION = '3.11'
+        ARTIFACT_DIR   = 'dist/'
+        // 可选：带外锚点路径（只读存储，如 NFS/只读 S3/HashiCorp Vault）
+        // READONLY_ANCHOR_PATH = '/mnt/readonly/anchors/${JOB_NAME}.anchor.json'
+    }
+
+    options {
+        timeout(time: 60, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+    }
+
+    stages {
+        stage('Build') {
+            agent { docker { image "python:${PYTHON_VERSION}" } }
+            steps {
+                sh '''
+                    python -m pip install --upgrade pip -q
+                    pip install -q -r requirements.txt 2>/dev/null || true
+                    python build.py --out ${ARTIFACT_DIR}
+                '''
+                stash includes: "${ARTIFACT_DIR}**/*", name: 'build-artifacts'
+            }
+        }
+
+        stage('Seal') {
+            agent { docker { image "python:${PYTHON_VERSION}" } }
+            // ⚠️ 关键：Seal 必须在可信环境、紧跟 Build 之后运行
+            // 建议：使用专用只读节点、受保护的 Kubernetes namespace 或独立凭证
+            steps {
+                unstash 'build-artifacts'
+                sh '''
+                    python -m pip install --upgrade pip -q
+                    pip install -q .
+                    python make_baseline.py ${ARTIFACT_DIR} --with-bytes --scan-binaries
+                '''
+                stash includes: "${ARTIFACT_DIR}baseline.json", name: 'baseline'
+            }
+        }
+
+        stage('Guard') {
+            agent { docker { image "python:${PYTHON_VERSION}" } }
+            steps {
+                unstash 'build-artifacts'
+                unstash 'baseline'
+                sh '''
+                    python -m pip install --upgrade pip -q
+                    pip install -q .
+                    python examples/ci-artifact-guard/ci_artifact_guard.py --target ${ARTIFACT_DIR} --scan-binaries
+                '''
+                // 可选：带外锚点校验
+                // sh '''
+                //     python verify_trust.py verify --target ${ARTIFACT_DIR} --anchor ${READONLY_ANCHOR_PATH}
+                // '''
+            }
+        }
+
+        stage('Publish') {
+            agent { docker { image "python:${PYTHON_VERSION}" } }
+            when { expression { currentBuild.currentResult == 'SUCCESS' } }
+            steps {
+                unstash 'build-artifacts'
+                sh '''
+                    echo "发布 ${ARTIFACT_DIR} 到 Nexus / Artifactory / PyPI / Docker Registry ..."
+                    # 你的发布逻辑
+                '''
+            }
+        }
+    }
+
+    post {
+        failure {
+            emailext subject: "构建产物完整性检查失败: ${JOB_NAME} #${BUILD_NUMBER}",
+                     body: "流水线因完整性偏离被阻断。请检查构建环境是否受污染。\n${BUILD_URL}",
+                     to: '${CHANGE_AUTHOR_EMAIL}',
+                     mimeType: 'text/plain'
+        }
+    }
+}

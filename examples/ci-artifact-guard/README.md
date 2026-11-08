@@ -36,6 +36,8 @@ RESULT: PASS
 
 ## 接进真实流水线
 
+### GitHub Actions（最简）
+
 ```yaml
 # 复制到你自己的 .github/workflows/ 即可，不含任何模板表达式
 name: guard build artifacts
@@ -55,6 +57,22 @@ jobs:
       - name: Verify before publish
         run: python examples/ci-artifact-guard/ci_artifact_guard.py --target dist/ --scan-binaries
 ```
+
+### GitLab CI
+
+见同目录 `.gitlab-ci.yml` —— 四阶段 `build → seal → guard → publish`，
+`seal` 与 `guard` 通过 `needs` 传递 artifact，`guard` 阶段 `allow_failure: false` 直接阻断。
+
+### Azure Pipelines
+
+见同目录 `azure-pipelines.yml` —— 四个 `stage` 显式依赖，`Seal` 建议在受保护代理池运行。
+
+### Jenkins Pipeline
+
+见同目录 `Jenkinsfile` —— `stash/unstash` 跨阶段传递产物与基线，
+`Seal` 阶段注释强调可信环境要求，失败自动邮件通知。
+
+---
 
 `--target` 默认会**修复**偏离并继续；只想告警、让流水线红灯，用
 `--no-repair`（有偏离即退出 1）。两种模式都要求目标目录里已有

@@ -1,0 +1,100 @@
+# Azure Pipelines: 构建产物完整性守护
+# 复制到你的仓库根目录 azure-pipelines.yml
+
+trigger:
+  - main
+  - releases/*
+
+variables:
+  PYTHON_VERSION: '3.11'
+  ARTIFACT_DIR: 'dist/'
+
+stages:
+- stage: Build
+  displayName: '构建产物'
+  jobs:
+  - job: Build
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '$(PYTHON_VERSION)'
+    - script: |
+        python -m pip install --upgrade pip
+        pip install -q -r requirements.txt 2>/dev/null || true
+        python build.py --out $(ARTIFACT_DIR)
+      displayName: '运行构建'
+    - publish: $(ARTIFACT_DIR)
+      artifact: build_artifacts
+      displayName: '发布构建产物供下一阶段使用'
+
+- stage: Seal
+  displayName: '生成可信基线'
+  dependsOn: Build
+  jobs:
+  - job: Seal
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - download: current
+      artifact: build_artifacts
+      displayName: '下载构建产物'
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '$(PYTHON_VERSION)'
+    - script: |
+        python -m pip install --upgrade pip
+        pip install -q .
+        python make_baseline.py $(ARTIFACT_DIR) --with-bytes --scan-binaries
+      displayName: '生成 baseline.json (含二进制)'
+    - publish: $(ARTIFACT_DIR)baseline.json
+      artifact: baseline
+      displayName: '发布基线供下一阶段使用'
+    # ⚠️ 关键：Seal 必须在可信环境、紧跟 Build 之后运行
+    # 建议在受保护的环境/只读代理池中执行
+
+- stage: Guard
+  displayName: '完整性守护检查'
+  dependsOn: Seal
+  jobs:
+  - job: Guard
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - download: current
+      artifact: build_artifacts
+    - download: current
+      artifact: baseline
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '$(PYTHON_VERSION)'
+    - script: |
+        python -m pip install --upgrade pip
+        pip install -q .
+        python examples/ci-artifact-guard/ci_artifact_guard.py --target $(ARTIFACT_DIR) --scan-binaries
+      displayName: 'H7 完整性检查（失败即阻断）'
+    # 可选：带外锚点校验
+    # - script: |
+    #     python verify_trust.py verify --target $(ARTIFACT_DIR) --anchor $(READONLY_ANCHOR_PATH)
+    #   displayName: '带外信任根校验'
+
+- stage: Publish
+  displayName: '发布产物'
+  dependsOn: Guard
+  condition: succeeded()
+  jobs:
+  - deployment: Publish
+    pool:
+      vmImage: 'ubuntu-latest'
+    environment: 'production'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: build_artifacts
+          - script: |
+              echo "发布 $(ARTIFACT_DIR) 到 Azure Artifacts / PyPI / Docker Registry ..."
+              # 你的发布逻辑
+            displayName: '发布到制品库'
