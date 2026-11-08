@@ -18,7 +18,7 @@
 ## 2. 本地验证
 
 ```bash
-python -m pytest -q                # 回归测试（当前 42 条）
+python -m pytest -q                # 回归测试（当前 43 条）
                                    # pyproject.toml 的 testpaths=["tests"]
                                    # 已阻止收集 work/ 下的演练副本
 python self_heal_demo.py            # 四幕演练，应全 PASS，rc=0

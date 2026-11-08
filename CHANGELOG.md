@@ -65,6 +65,13 @@ All notable changes to self_heal_kit. Format loosely follows
 - **`SECURITY.md` 路径校正**：按 GitHub 官方文档把私下漏洞报告入口改为
   `Settings` → `Security and quality` → `Advanced Security` →
   `Private vulnerability reporting` → `Enable`（仅 public 仓库、需 admin）。
+- **H7 基线自引用缺陷**（发布包体积核验逼出）：`make_baseline()` 把
+  `baseline.json` 自身也收进清单，`with_bytes` 又把上一版清单的完整 hex
+  嵌进新基线，导致每次重生成约翻倍（实测 4.0 MB → 8.7 MB），发布包
+  863 KB 里 740 KB 全是这个负载。现生成时跳过清单自身（`detect()` 本就
+  跳过它：清单是元数据，由 `__seal__` + 带外锚点保护），`__bytes__` 组装
+  另加同名防御；补回归用例断言重生成后体积与 `__bytes__` 均不变。
+  回归 42 → 43 条。
 
 ### Added
 

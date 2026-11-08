@@ -197,6 +197,14 @@ def make_baseline(target_dir: str, manifest_path: str | None = None,
         for fn in files:
             p = os.path.join(root, fn)
             rel = os.path.relpath(p, target_dir).replace("\\", "/")
+            # The manifest is metadata, not program source. Baselining itself
+            # is meaningless (its hash changes on every regeneration) and
+            # actively harmful: with_bytes would hex-embed the PREVIOUS
+            # manifest, roughly DOUBLING baseline.json on each regeneration
+            # (4 MB -> 8 MB -> 17 MB ...). It is protected by __seal__ and the
+            # out-of-band trust anchor instead; detect() already skips it.
+            if rel == "baseline.json":
+                continue
             # Agent-guard scope: only baselined roots (when configured).
             if scope_roots and not _is_under(rel, scope_roots):
                 continue
@@ -223,7 +231,7 @@ def make_baseline(target_dir: str, manifest_path: str | None = None,
     if with_bytes:
         store = {}
         for rel in manifest:
-            if rel.startswith("__"):
+            if rel.startswith("__") or rel == "baseline.json":
                 continue
             p = os.path.join(target_dir, rel)
             try:

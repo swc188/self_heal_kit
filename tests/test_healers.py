@@ -931,3 +931,30 @@ def test_repair_never_attaches_to_outer_baseline_across_git_boundary():
     res2 = h2.repair(fake)
     assert res2.changed, res2.detail
 
+
+def test_h7_baseline_never_embeds_itself():
+    """H7 regression: make_baseline must not baseline/embed baseline.json.
+
+    Hex-embedding the previous manifest made baseline.json roughly double on
+    every regeneration (4 MB -> 8 MB -> 17 MB ...), bloating the release zip.
+    The manifest is metadata protected by __seal__ + the trust anchor.
+    """
+    from healers.integrity_guard import make_baseline
+
+    d = tempfile.mkdtemp()
+    _write_text(os.path.join(d, "app.py"), "x = 1\n")
+    # A large stale manifest on disk — exactly what triggered the growth.
+    _write_text(os.path.join(d, "baseline.json"), "x" * 100000)
+
+    m1 = make_baseline(d, with_bytes=True)
+    p = os.path.join(d, "baseline.json")
+    s1 = os.path.getsize(p)
+    assert "baseline.json" not in m1
+    assert "baseline.json" not in m1["__bytes__"]
+    assert "app.py" in m1["__bytes__"]
+
+    m2 = make_baseline(d, with_bytes=True)
+    s2 = os.path.getsize(p)
+    assert s2 == s1, "baseline.json grew on regeneration: %d -> %d" % (s1, s2)
+    assert m2["__bytes__"] == m1["__bytes__"]
+
