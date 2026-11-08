@@ -24,10 +24,13 @@ jobs:
           python -m pip install pytest
 
       - name: Byte-compile all sources
-        run: python -m compileall -q *.py guards healers
+        run: python -m compileall -q *.py guards healers examples
 
       - name: Regression tests
         run: python -m pytest tests/ -q
+
+      - name: CI artifact guard demo (tamper / delete / drop -> restore)
+        run: python examples/ci-artifact-guard/ci_artifact_guard.py --demo
 
       - name: Integrity self-check (H7, must be idempotent)
         run: python self_heal.py --self --no-test

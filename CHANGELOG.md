@@ -3,6 +3,22 @@
 All notable changes to self_heal_kit. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added（首个真实场景示例）
+
+- **`examples/ci-artifact-guard/`**：CI 构建产物防篡改的可复现示例与
+  可复用 CLI。`--demo` 在临时目录构造两个可信产物 → `make_baseline.py
+  --with-bytes` 封印 → 注入篡改 / 删除 / 投放新文件三类偏离 → H7-only
+  引擎检出并字节级恢复 → 逐项验证（新增文件可逆隔离到 `.quarantine/`）；
+  `--target dist/` 可接真实流水线，加 `--no-repair` 即变为只告警的门禁。
+  附可直接复制的 GitHub Actions 片段与两个真实坑（`dist/` 白名单、
+  产物目录不能用 H1–H6 格式 healer 改写）。
+- CI 现在把 `examples` 纳入字节编译（3.8/3.11/3.13 均验证），并在每个
+  Python 版本上跑一次 `--demo`，让示例本身也带上回归护栏。
+- 说明：1.0.0 已公开分发，本段按 Keep a Changelog 记入 `Unreleased`，
+  **不改动已发布的 `1.0.0` 版本号与 `version.py`**。
+
 ## [1.0.0] — 2026-11-07
 
 首个对外发布版本。核心叙事：**AI Agent 防篡改自保护底座**——

@@ -144,7 +144,9 @@ self_heal_kit/
 ├── SECURITY.md            # 漏洞私下披露政策与响应方式
 ├── pyproject.toml         # 可安装元数据 + 6 个 CLI 入口 + pytest 收集范围
 ├── version.py             # __version__ 单一事实来源（H6 契约 / 打包共用）
-├── .github/workflows/ci.yml  # CI：3 个 Python 版本 × 43 条回归 + H7 自检
+├── .github/workflows/ci.yml  # CI：3 个 Python 版本 × 43 条回归 + 示例演练 + H7 自检
+├── examples/
+│   └── ci-artifact-guard/ # 首个真实场景：CI 产物防篡改（一键复现 + 流水线接入）
 ├── tests/                 # pytest 回归（43 条）
 ├── .gitignore
 └── .gitattributes         # 强制仓库 LF + 发布包排除内部评估材料
@@ -164,7 +166,12 @@ self_heal_kit/
 python -m pip install -e .        # 开发模式安装；不引入任何运行时依赖
 python -m pytest -q               # 期望：43 passed
 python self_heal_demo.py          # 期望：四幕全 PASS，rc=0
+python examples/ci-artifact-guard/ci_artifact_guard.py --demo   # 期望：RESULT: PASS
 ```
+
+**想先看真实用途**：`examples/ci-artifact-guard/` 是首个面向采用的示例 ——
+构建产物被篡改 / 删除 / 投放新文件 → 检出 → 字节级恢复 → 流水线告警，
+含可直接复制的 GitHub Actions 片段。详见该目录的 `README.md`。
 
 安装后可用 6 个入口：`self-heal`、`self-heal-watch`、`self-heal-guard`、
 `self-heal-baseline`、`self-heal-trust`、`self-heal-demo`（等价于直接
