@@ -12,6 +12,7 @@ healer never needs to know about loops, circuit breakers or snapshots.
 
 from __future__ import annotations
 
+import fnmatch
 import os
 from dataclasses import dataclass
 from typing import List
@@ -55,6 +56,16 @@ _SKIP_DIRS = {
     "sample_data", "testdata",
 }
 
+# Build artefacts whose directory name depends on the distribution name
+# (e.g. `self_heal_kit.egg-info/` after `pip install -e .`). They are
+# generated and volatile, so they must never be baselined or quarantined.
+_BUILD_DIR_PATTERNS = ("*.egg-info", "*.dist-info")
+
+
+def _is_skipped_dir(name: str) -> bool:
+    return name in _SKIP_DIRS or any(
+        fnmatch.fnmatch(name, pat) for pat in _BUILD_DIR_PATTERNS)
+
 
 class Healer:
     name: str = "base"
@@ -71,7 +82,7 @@ class Healer:
         out: List[str] = []
         for root, dirs, files in os.walk(target_dir):
             # 剪枝：跳过工具/缓存目录（不进入）
-            dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
+            dirs[:] = [d for d in dirs if not _is_skipped_dir(d)]
             for fn in files:
                 p = os.path.join(root, fn)
                 if exclude_binary and any(p.endswith(e) for e in _BINARY_EXTS):

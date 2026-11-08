@@ -2,3 +2,10 @@
 # Prevents the kit's own H1 (CRLF) healer from flagging its own source and
 # avoids Windows autocrlf drift on checkout.
 * text=auto eol=lf
+
+# Internal assessment material: keep it in the repository (history and
+# provenance matter), but leave it out of `git archive` release zips.
+# NOTE: commercialization_report.md is intentionally NOT excluded — H7
+# baselines it, so an archive missing it would be reported as a deleted
+# file and rebuilt from the embedded bytes anyway.
+analysis/ export-ignore

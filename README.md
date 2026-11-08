@@ -139,18 +139,37 @@ self_heal_kit/
 ├── CLA.md                 # 贡献者许可协议（双许可的法律前提）
 ├── CONTRIBUTING.md        # 贡献指南 + 自举铁律
 ├── CHANGELOG.md           # 版本变更记录
+├── SECURITY.md            # 漏洞私下披露政策与响应方式
+├── pyproject.toml         # 可安装元数据 + 6 个 CLI 入口 + pytest 收集范围
+├── version.py             # __version__ 单一事实来源（H6 契约 / 打包共用）
+├── .github/workflows/ci.yml  # CI：3 个 Python 版本 × 42 条回归 + H7 自检
 ├── tests/                 # pytest 回归（42 条）
 ├── .gitignore
-└── .gitattributes         # 强制仓库 LF（避免 Windows 把源码 checkout 成 CRLF）
+└── .gitattributes         # 强制仓库 LF + 发布包排除内部评估材料
 ```
 
 ---
 
-## 六、环境要求
+## 六、环境要求与安装
 
 - **Python 3.8+**（仅用标准库：`os / io / csv / tempfile / subprocess / re` 等）
-- **零第三方依赖**，无需 `pip install`
+- **运行时零第三方依赖**：clone 仓库或解压发布包后直接跑脚本即可，无需安装
 - 已自带 `.venv/` 隔离环境（可选）：在本目录内 `python3 -m venv .venv` 创建，运行用 `.venv/Scripts/python`
+
+**可选安装**（要把本工具当库 `import`，或使用命令行入口时）：
+
+```bash
+python -m pip install -e .        # 开发模式安装；不引入任何运行时依赖
+python -m pytest -q               # 期望：42 passed
+python self_heal_demo.py          # 期望：四幕全 PASS，rc=0
+```
+
+安装后可用 6 个入口：`self-heal`、`self-heal-watch`、`self-heal-guard`、
+`self-heal-baseline`、`self-heal-trust`、`self-heal-demo`（等价于直接
+`python <脚本>.py`）。不安装也不影响本文档里的任何示例。
+
+> 版本以 `README.md` 的 `Version:` 声明为准；`version.py` 的 `__version__`
+> 是打包时的动态版本来源，H6 会负责把它对齐到 README 声明。
 
 ---
 
@@ -173,8 +192,9 @@ python3 self_test.py
 
 ### 3. 跑回归测试
 ```bash
-python3 -m pytest tests/ -q     # 期望：42 passed
+python3 -m pytest -q            # 期望：42 passed
 ```
+`pyproject.toml` 已设 `testpaths = ["tests"]`，不会误收 `work/` 演练副本。
 
 ### 4. 守护进程 / 无人值守监控（阶段1 新增）
 
@@ -347,4 +367,8 @@ Python 标准库），版权链条单一；外部贡献通过 `CLA.md` 授予**�
 
 **需要商业许可**：通过 GitHub 仓库所有者的私有联系渠道发起，说明主体、场景、
 分发方式与所需条款；具体权利以双方签署的书面协议为准。
+
+> `analysis/` 与 `commercialization_report.md` 是内部评估与商业化推演材料，
+> 记录的是判断过程和不确定性，**不构成产品能力或商业条款的承诺**；
+> `analysis/` 已从发布压缩包中排除。
 

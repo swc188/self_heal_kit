@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.8", "3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install test dependency (runtime itself has none)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+
+      - name: Byte-compile all sources
+        run: python -m compileall -q *.py guards healers
+
+      - name: Regression tests
+        run: python -m pytest tests/ -q
+
+      - name: Integrity self-check (H7, must be idempotent)
+        run: python self_heal.py --self --no-test
+
+      # The four-act drill (self_heal_demo.py) is intentionally NOT in CI:
+      # it stages nested git repositories under work/ and depends on local
+      # git identity and a writable scratch tree. Run it before each release.

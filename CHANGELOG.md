@@ -23,6 +23,31 @@ All notable changes to self_heal_kit. Format loosely follows
 - 保持版本号 `1.0.0` 不变：v1.0.0 尚未对外发布，本次属于发布前的许可定稿，
   不产生「1.0.0 曾是 MIT」的公开版本。
 
+### Engineering readiness（发布前的对外可信度补齐）
+
+- **`SECURITY.md`**：漏洞私下披露渠道、报告范围（明确区分
+  `THREAT_MODEL.md` 已声明的盲区与真正的绕过）、不承诺 SLA 的响应方式 ——
+  安全类工具不再没有上报入口。
+- **CI**（`.github/workflows/ci.yml`）：Python 3.8 / 3.11 / 3.13 matrix，
+  字节编译 + `pytest tests/ -q` + H7 幂等自检；四幕演练因依赖本地 git 身份
+  与嵌套仓库，保留为发版前人工项（已在工作流中注明原因）。
+- **可安装**（`pyproject.toml`）：`pip install -e .`、6 个 `console_scripts`
+  入口、`testpaths = ["tests"]`（根治 `work/` 演练副本被递归收集导致的
+  import 冲突）；刻意不填 `license` 字段，避免打包工具把双许可中的
+  `LicenseRef-Commercial` 误判为非法 SPDX。
+- **版本单一事实来源**（`version.py`）：`__version__ = "1.0.0"` 供打包动态
+  读取，并与 README 的 `Version:` 声明及 H6 契约对齐。
+- **发布包瘦身**：`.gitattributes` 用 `export-ignore` 排除 `analysis/`
+  内部评估材料；`commercialization_report.md` 因已被 H7 基线记录，排除后
+  会在解压自愈时被从嵌入字节重建，故保留（属性文件里已注明原因）。
+- **H7 配套修复**（`healers/base.py` + `healers/integrity_guard.py`）：新增
+  `_is_skipped_dir()`，让 `*.egg-info/` / `*.dist-info/` 这类随发行名变化的
+  构建产物既不进基线、也不被严格模式判为「恶意新增文件」；白名单的目录
+  匹配改用 `fnmatch`（对原有精确目录名行为完全不变）。否则用户照
+  `pip install -e .` 装一次，`--self` 就会把自己的构建产物隔离掉。
+- README 增「环境要求与安装」段与 6 个 CLI 入口、目录结构补齐、测试命令
+  统一为 `pytest -q`；`CONTRIBUTING.md` 同步。
+
 ### Added
 
 - **H7 完整性守护**（`healers/integrity_guard.py`）：以 `baseline.json`

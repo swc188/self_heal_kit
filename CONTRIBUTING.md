@@ -18,9 +18,9 @@
 ## 2. 本地验证
 
 ```bash
-python -m pytest tests/ -q         # 回归测试（当前 42 条）
-                                   # 必须限定 tests/：work/ 下的演练副本会
-                                   # 让 pytest 递归收集时产生 import 冲突
+python -m pytest -q                # 回归测试（当前 42 条）
+                                   # pyproject.toml 的 testpaths=["tests"]
+                                   # 已阻止收集 work/ 下的演练副本
 python self_heal_demo.py            # 四幕演练，应全 PASS，rc=0
 python self_heal.py --self          # 对自身目录做 H7 完整性体检
 python verify_trust.py verify --target . --anchor <你的带外锚点路径>

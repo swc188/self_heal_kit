@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "self-heal-kit"
+dynamic = ["version"]
+description = "AI Agent 防篡改自保护底座：文件完整性自愈、前置闸门与带外信任根"
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [{ name = "self_heal_kit Authors" }]
+keywords = ["integrity", "self-healing", "tamper-detection", "ai-agent", "fim"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = []
+
+# No `license =` field on purpose: this project is dual-licensed under
+# `GPL-3.0-or-later OR LicenseRef-Commercial`, where the second half is a
+# custom LicenseRef. Packaging tools validating a single SPDX expression can
+# misread it. The authoritative notice is LICENSE (shipped in every archive).
+
+[project.scripts]
+self-heal = "self_heal:main"
+self-heal-watch = "self_heal_watch:main"
+self-heal-guard = "agent_guard:main"
+self-heal-baseline = "make_baseline:main"
+self-heal-trust = "verify_trust:main"
+self-heal-demo = "self_heal_demo:main"
+
+[tool.setuptools]
+py-modules = [
+    "version", "engine", "self_heal", "self_heal_watch", "self_heal_demo",
+    "agent_guard", "make_baseline", "make_fixtures", "verify_trust",
+    "run_integration_demo", "self_test",
+]
+
+[tool.setuptools.packages.find]
+include = ["guards*", "healers*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "version.__version__" }
+
+[tool.pytest.ini_options]
+# work/ holds staged demo copies containing their own test files; without
+# testpaths, a bare `pytest -q` recurses into them and fails with import
+# file mismatch. Keep collection scoped to the real suite.
+testpaths = ["tests"]

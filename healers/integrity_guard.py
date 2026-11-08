@@ -71,7 +71,8 @@ DEFAULT_NEW_FILE_WHITELIST = {
     "baseline.json",
     "*.log", "*.tmp", "*.bak", "*.swp", "*.orig", "*.pyc", "*.pyo",
     ".venv/", "venv/", "env/", "node_modules/",
-    "dist/", "build/", "__pycache__/", ".pytest_cache/", ".mypy_cache/",
+    "dist/", "build/", "*.egg-info/", "*.dist-info/",
+    "__pycache__/", ".pytest_cache/", ".mypy_cache/",
     ".tox/", ".git/", "work/", ".quarantine/", ".workbuddy/", "baselines/",
     "fixtures/", "demo_project/", "analysis/", "docs/",
     "examples/", "testdata/", "sample_data/",
@@ -189,10 +190,10 @@ def make_baseline(target_dir: str, manifest_path: str | None = None,
         the manifest only describes the agent workspace instead of the whole
         host project.
     """
-    from .base import _SKIP_DIRS
+    from .base import _is_skipped_dir
     manifest = {}
     for root, dirs, files in os.walk(target_dir):
-        dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
+        dirs[:] = [d for d in dirs if not _is_skipped_dir(d)]
         for fn in files:
             p = os.path.join(root, fn)
             rel = os.path.relpath(p, target_dir).replace("\\", "/")
@@ -274,7 +275,9 @@ def _is_whitelisted(rel: str, whitelist) -> bool:
             # because any file under that directory carries the component in
             # its relpath.
             stem = pat[:-1]
-            if stem in parts:
+            # fnmatch keeps exact directory names behaving exactly as before
+            # while also allowing patterns such as "*.egg-info/".
+            if any(fnmatch.fnmatch(p, stem) for p in parts):
                 return True
         elif pat.startswith("*."):
             if rel.endswith(pat[1:]):
