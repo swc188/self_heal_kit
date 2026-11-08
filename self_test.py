@@ -64,8 +64,11 @@ def summarize(path: str) -> str:
     notes = []
     if raw.startswith(b"\xef\xbb\xbf"):
         notes.append("UTF-8 BOM")
-    if b"\r\n" in raw:
-        notes.append(f"{raw.count(b'\r\n')}x CRLF")
+    crlf = b"\r\n"
+    if crlf in raw:
+        # Keep the backslash OUT of the f-string expression: CPython < 3.12
+        # rejects backslashes inside f-string replacement fields (PEP 701).
+        notes.append(f"{raw.count(crlf)}x CRLF")
     text = raw.decode("utf-8", errors="replace")
     if "{{" in text or "}}" in text:
         notes.append("escape-brace leak '{{ }}'")

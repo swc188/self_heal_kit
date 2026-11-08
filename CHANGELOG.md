@@ -54,7 +54,7 @@ All notable changes to self_heal_kit. Format loosely follows
 
 ### Pre-publish（首次上传前的收尾）
 
-- **提交身份历史改写**：全部 26 条本地提交的 author / committer 邮箱由
+- **提交身份历史改写**：全部 28 条本地提交的 author / committer 邮箱由
   `swc18@local` 统一为 GitHub 提供的 `ID+USERNAME@users.noreply.github.com`，
   使 push 后提交能关联账号并计入贡献图，同时不公开真实邮箱。仓库**从未 push**，
   因此改写在发布前完成，不涉及「改写已发布历史」；作者名保持 `swc18`。
@@ -72,6 +72,13 @@ All notable changes to self_heal_kit. Format loosely follows
   跳过它：清单是元数据，由 `__seal__` + 带外锚点保护），`__bytes__` 组装
   另加同名防御；补回归用例断言重生成后体积与 `__bytes__` 均不变。
   回归 42 → 43 条。
+- **首次 CI 红灯修复**（首次 push 后由 GitHub Actions 3.8 / 3.11 任务逼出）：
+  `self_test.py` 的 `f"{raw.count(b'\r\n')}x CRLF"` 把反斜杠放在 f-string
+  **表达式内**，只有 CPython 3.12+（PEP 701）允许，3.8 / 3.11 字节编译直接
+  `SyntaxError`。改为先取 `crlf = b"\r\n"` 再引用变量。此前用
+  `ast.parse(feature_version=(3,8))` 做的本地兼容性自检对该规则无效
+  （3.13 解析器无法回溯这条限制），以真实 matrix 为准；3.13 任务当时全绿，
+  恰是低版本矩阵存在的意义。
 
 ### Added
 
